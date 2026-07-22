@@ -335,6 +335,16 @@ async function seedMonthlyColumns(): Promise<void> {
     position += 10;
   }
 
+  // The Validasi column is the sum of the per-bank member breakdown, derived on
+  // read from `monthly_validations`. Wire it up here rather than adding a field
+  // to every column entry, and only where it is still at the default — matching
+  // the resultEffect initialiser above, so a deliberate later change survives a
+  // re-seed.
+  await unsafeDb.monthlyColumn.updateMany({
+    where: { key: 'validasi', computation: 'NONE' },
+    data: { computation: 'VALIDATION_TOTAL' },
+  });
+
   console.log(`  monthly cols: ${MONTHLY_COLUMNS.length}`);
 }
 
