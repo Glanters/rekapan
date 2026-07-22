@@ -35,11 +35,18 @@ npm ci
 # konfigurasi produksi — JANGAN commit file ini
 cp .env.example .env
 #   isi: DATABASE_URL, REDIS_URL, S3_*, ACCOUNT_CENTER_*, SESSION_SECRET,
-#        ENCRYPTION_KEY, APP_URL=https://rekapan.site
+#        ENCRYPTION_KEY, APP_URL=https://rekapan.site, ROOT_EMAIL=<email admin>
 
+npx prisma generate                # generate Prisma Client (src/generated/prisma) — di-gitignore
 npx prisma migrate deploy          # terapkan migrasi ke database produksi
+npm run db:seed                    # tanam roles, permissions, user Root (deploy pertama; aman diulang)
 npm run build                      # build Next.js
 ```
+
+> `db:seed` wajib pada deploy pertama: `migrate deploy` tidak menjalankan seed,
+> jadi tanpa ini database tak punya role/permission/Root dan tak seorang pun
+> bisa mengakses aplikasi. Pastikan `ROOT_EMAIL` = email admin yang terdaftar di
+> Account Center.
 
 ## 2. Jalankan sebagai service (systemd)
 
@@ -154,6 +161,7 @@ uji dari IP Anda sendiri dulu (tombol "Gunakan IP saya" di halaman itu).
 cd /opt/rekapan
 git pull
 npm ci
+npx prisma generate            # regenerasi client (di-gitignore, tak ikut git pull)
 npx prisma migrate deploy
 npm run build
 sudo systemctl restart rekapan

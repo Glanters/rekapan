@@ -28,7 +28,8 @@
     "docker:seed": "docker compose --profile tools run --rm prisma npm run db:seed",
     "docker:reset": "docker compose --profile tools run --rm prisma npx prisma migrate reset --force",
     "docker:sh": "docker compose --profile tools run --rm prisma bash",
-    "prepare": "husky"
+    "prepare": "husky",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1091.0",
