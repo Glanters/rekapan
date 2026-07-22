@@ -298,10 +298,285 @@ const MONTHLY_COLUMNS = [
   },
 ] as const;
 
-async function seedMonthlyColumns(): Promise<void> {
-  let position = 10;
+/**
+ * Monthly report templates — per-brand column layouts. A site is assigned one,
+ * and its reports show that template's columns plus the shared ones.
+ */
+const MONTHLY_TEMPLATES = [
+  { code: 'PNG', name: 'PNG', position: 10 },
+  { code: 'IDN', name: 'IDN', position: 20 },
+] as const;
 
-  for (const column of MONTHLY_COLUMNS) {
+/**
+ * Columns shared by every template — the common financial fields. They keep a
+ * null templateId; everything else in MONTHLY_COLUMNS belongs to PNG.
+ */
+const SHARED_COLUMN_KEYS = new Set<string>([
+  'pl_bet',
+  'validasi',
+  'deposit',
+  'withdraw',
+  'hasil',
+  'form_deposit',
+  'form_withdraw',
+  'setor_kas',
+  'turnover',
+]);
+
+/**
+ * IDN's own columns, in report order. Keys are prefixed `idn_` so they stay
+ * unique against PNG's. Bonus and rollingan effects are left NEUTRAL — whether
+ * they feed the derived Hasil is an accounting choice, set later in Master Data,
+ * mirroring the philosophy of MONTHLY_COLUMNS.
+ */
+const IDN_COLUMNS = [
+  {
+    key: 'idn_bonus_cb_livegame',
+    label: 'Bonus CB Livegame 2,5% & 5%',
+    group: 'Bonus',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_bonus_cb_pragmatic',
+    label: 'Bonus CB Pragmatic Play',
+    group: 'Bonus',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_bonus_cb_slot',
+    label: 'Bonus CB Slot',
+    group: 'Bonus',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_bonus_cb_arcade',
+    label: 'Bonus CB Arcade',
+    group: 'Bonus',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_bonus_cb_elottery',
+    label: 'Bonus CB E-Lottery',
+    group: 'Bonus',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_extra_to_slot',
+    label: 'Extra Turnover Slot',
+    group: 'Turnover',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_bonus_scatter',
+    label: 'Bonus Scatter',
+    group: 'Bonus',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_bonus_super_scatter',
+    label: 'Bonus Super Scatter',
+    group: 'Bonus',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_bonus_vip',
+    label: 'Bonus VIP',
+    group: 'Bonus',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_lomba_bonus',
+    label: 'Lomba Bonus',
+    group: 'Bonus',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_bonus_tm_demo',
+    label: 'Bonus TM / Demo Slot',
+    group: 'Bonus',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_form_bonus_vip',
+    label: 'Form Bonus VIP',
+    group: 'Form',
+    type: 'INTEGER',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_form_cb_livegame',
+    label: 'Form CB Livegame 2.5% & 5%',
+    group: 'Form',
+    type: 'INTEGER',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_form_cb_slot',
+    label: 'Form CB Slot',
+    group: 'Form',
+    type: 'INTEGER',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_form_extra_to_slot',
+    label: 'Form Extra TO Slot',
+    group: 'Form',
+    type: 'INTEGER',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_form_cb_pragmatic',
+    label: 'Form CB Pragmatic',
+    group: 'Form',
+    type: 'INTEGER',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_form_cb_arcade',
+    label: 'Form CB Arcade',
+    group: 'Form',
+    type: 'INTEGER',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_form_cb_elottery',
+    label: 'Form CB E-Lottery',
+    group: 'Form',
+    type: 'INTEGER',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_form_bonus_scatter',
+    label: 'Form Bonus Scatter',
+    group: 'Form',
+    type: 'INTEGER',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_form_bonus_super_scatter',
+    label: 'Form Bonus Super Scatter',
+    group: 'Form',
+    type: 'INTEGER',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_rollingan_livegame',
+    label: 'Rollingan Livegame',
+    group: 'Rollingan',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_rollingan_slot',
+    label: 'Rollingan Slot',
+    group: 'Rollingan',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_rollingan_pragmatic',
+    label: 'Rollingan Pragmatic Play',
+    group: 'Rollingan',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_rollingan_elottery',
+    label: 'Rollingan Elottery',
+    group: 'Rollingan',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_rollingan_arcade',
+    label: 'Rollingan Arcade',
+    group: 'Rollingan',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_rollingan_esports',
+    label: 'Rollingan Esports',
+    group: 'Rollingan',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_rollingan_sbobet',
+    label: 'Rollingan Sbobet',
+    group: 'Rollingan',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_bonus_kpbi',
+    label: 'Bonus KPBI',
+    group: 'Bonus',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_form_bonus_kpbi',
+    label: 'Form Bonus KPBI',
+    group: 'Form',
+    type: 'INTEGER',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_pinjaman_kas_admin',
+    label: 'Pinjaman dari Kas Admin',
+    group: 'Kas',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+  {
+    key: 'idn_setoran',
+    label: 'Setoran IDN',
+    group: 'Kas',
+    type: 'CURRENCY',
+    effect: 'NEUTRAL',
+  },
+] as const;
+
+async function seedMonthlyColumns(): Promise<void> {
+  // Templates first — the column and site assignments below reference them.
+  const templateIdByCode = new Map<string, string>();
+  for (const template of MONTHLY_TEMPLATES) {
+    const row = await unsafeDb.monthlyTemplate.upsert({
+      where: { code: template.code },
+      create: { code: template.code, name: template.name, position: template.position },
+      update: { name: template.name, position: template.position },
+      select: { id: true },
+    });
+    templateIdByCode.set(template.code, row.id);
+  }
+  const pngId = templateIdByCode.get('PNG') ?? null;
+  const idnId = templateIdByCode.get('IDN') ?? null;
+
+  // Every column, tagged with the template it belongs to: shared financial keys
+  // keep a null template, the rest of MONTHLY_COLUMNS is PNG's, IDN_COLUMNS is
+  // IDN's.
+  const catalogue = [
+    ...MONTHLY_COLUMNS.map((column) => ({
+      column,
+      templateId: SHARED_COLUMN_KEYS.has(column.key) ? null : pngId,
+    })),
+    ...IDN_COLUMNS.map((column) => ({ column, templateId: idnId })),
+  ];
+
+  let position = 10;
+  for (const { column, templateId } of catalogue) {
     await unsafeDb.monthlyColumn.upsert({
       where: { key: column.key },
       create: {
@@ -312,19 +587,19 @@ async function seedMonthlyColumns(): Promise<void> {
         position,
         precision: column.type === 'INTEGER' ? 0 : 2,
         resultEffect: column.effect,
+        templateId,
       },
-      // Position and label are left alone on update: an administrator may have
-      // reordered or renamed the column, and the seed must not undo that.
+      // Position, label, and template are left alone on update: an administrator
+      // may have reordered, renamed, or re-homed the column, and the seed must
+      // not undo that.
       update: { group: column.group },
       select: { id: true },
     });
 
-    // Initialise the result effect only where it is still at the default.
-    // Matching on NEUTRAL is what distinguishes "never configured" from
-    // "deliberately set to NEUTRAL by an administrator"... which it does not,
-    // strictly — but erring toward initialising an unconfigured column is far
-    // less harmful than resetting a considered choice on every deploy, which is
-    // what an unconditional update would do.
+    // Initialise the result effect only where it is still at the default —
+    // NEUTRAL is the "never configured" sentinel, so a deliberate NEUTRAL choice
+    // is (imperfectly) preserved while an unconfigured column gets its intended
+    // effect rather than being reset on every deploy.
     if (column.effect !== 'NEUTRAL') {
       await unsafeDb.monthlyColumn.updateMany({
         where: { key: column.key, resultEffect: 'NEUTRAL' },
@@ -335,17 +610,35 @@ async function seedMonthlyColumns(): Promise<void> {
     position += 10;
   }
 
-  // The Validasi column is the sum of the per-bank member breakdown, derived on
-  // read from `monthly_validations`. Wire it up here rather than adding a field
-  // to every column entry, and only where it is still at the default — matching
-  // the resultEffect initialiser above, so a deliberate later change survives a
-  // re-seed.
+  if (pngId) {
+    // Columns that predate this feature carry a null template. The PNG-owned
+    // ones (not shared, not IDN) are homed to PNG; only null templates are
+    // touched, so a deliberate reassignment survives a re-seed.
+    await unsafeDb.monthlyColumn.updateMany({
+      where: {
+        templateId: null,
+        key: { notIn: [...SHARED_COLUMN_KEYS] },
+        NOT: { key: { startsWith: 'idn_' } },
+      },
+      data: { templateId: pngId },
+    });
+
+    // Existing sites default to PNG — the layout they already used.
+    await unsafeDb.site.updateMany({
+      where: { templateId: null },
+      data: { templateId: pngId },
+    });
+  }
+
+  // The Validasi column sums the per-bank member breakdown, derived on read.
+  // Wired only where still at the default, so a deliberate later change survives.
   await unsafeDb.monthlyColumn.updateMany({
     where: { key: 'validasi', computation: 'NONE' },
     data: { computation: 'VALIDATION_TOTAL' },
   });
 
-  console.log(`  monthly cols: ${MONTHLY_COLUMNS.length}`);
+  console.log(`  templates   : ${MONTHLY_TEMPLATES.length}`);
+  console.log(`  monthly cols: ${MONTHLY_COLUMNS.length + IDN_COLUMNS.length}`);
 }
 
 /** Turnover games from the customer's spreadsheet; each becomes a column. */

@@ -93,26 +93,79 @@ function fromIsoDate(value: string): Date {
   return parsed;
 }
 
+const COLUMN_SELECT = {
+  id: true,
+  key: true,
+  label: true,
+  group: true,
+  dataType: true,
+  position: true,
+  precision: true,
+  unit: true,
+  includeInTotals: true,
+  isRequired: true,
+  resultEffect: true,
+  computation: true,
+} as const;
+
+/**
+ * Every column, across all templates.
+ *
+ * Used where the full catalogue is needed — upsert validation (keys are globally
+ * unique, so no template scoping is required to resolve a submitted key) and the
+ * bulk exports. The table and entry form use {@link listTemplateColumns}.
+ */
 export async function listColumns(): Promise<MonthlyColumnDto[]> {
-  const columns = await unsafeDb.monthlyColumn.findMany({
+  return unsafeDb.monthlyColumn.findMany({
     where: { deletedAt: null },
     orderBy: [{ position: 'asc' }, { label: 'asc' }],
-    select: {
-      id: true,
-      key: true,
-      label: true,
-      group: true,
-      dataType: true,
-      position: true,
-      precision: true,
-      unit: true,
-      includeInTotals: true,
-      isRequired: true,
-      resultEffect: true,
-      computation: true,
-    },
+    select: COLUMN_SELECT,
   });
-  return columns;
+}
+
+/**
+ * The columns a template shows: the shared ones (null templateId) plus that
+ * template's own. A null templateId yields the shared columns alone.
+ */
+export async function listTemplateColumns(
+  templateId: string | null,
+): Promise<MonthlyColumnDto[]> {
+  return unsafeDb.monthlyColumn.findMany({
+    where: {
+      deletedAt: null,
+      ...(templateId
+        ? { OR: [{ templateId: null }, { templateId }] }
+        : { templateId: null }),
+    },
+    orderBy: [{ position: 'asc' }, { label: 'asc' }],
+    select: COLUMN_SELECT,
+  });
+}
+
+/**
+ * The template whose columns the table and form should show for a site filter.
+ *
+ * A single selected site uses its own template; anything else (all sites, or a
+ * site with no template) falls back to the primary template, so the familiar
+ * all-sites view keeps its columns rather than collapsing to the shared few.
+ */
+async function resolveDisplayTemplateId(
+  siteIds: readonly string[] | null,
+): Promise<string | null> {
+  const [only] = siteIds ?? [];
+  if (siteIds?.length === 1 && only) {
+    const site = await unsafeDb.site.findUnique({
+      where: { id: only },
+      select: { templateId: true },
+    });
+    if (site?.templateId) return site.templateId;
+  }
+
+  const primary = await unsafeDb.monthlyTemplate.findFirst({
+    orderBy: { position: 'asc' },
+    select: { id: true },
+  });
+  return primary?.id ?? null;
 }
 
 /**
@@ -398,8 +451,14 @@ export async function listMonthly(
   const where = buildMonthlyWhere(ctx, params);
   const db = scopedDb(ctx);
 
+  // The table — and the entry form it feeds — shows the columns of one template:
+  // the selected site's, or the primary template for the all-sites view.
+  const templateId = await resolveDisplayTemplateId(
+    ctx.narrowSiteFilter(params.siteIds),
+  );
+
   const [columns, banks, total, reports] = await Promise.all([
-    listColumns(),
+    listTemplateColumns(templateId),
     listBanks(),
     db.monthlyReport.count({ where }),
     db.monthlyReport.findMany({

@@ -276,6 +276,11 @@ model Site {
   currency String     @default("IDR") @db.VarChar(8)
   status   SiteStatus @default(ACTIVE)
 
+  /// The Monthly report layout this site uses. Null falls back to the shared
+  /// columns only.
+  templateId String?          @db.Uuid
+  template   MonthlyTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
   users           UserSite[]
   monthlyReports  MonthlyReport[]
   turnoverReports TurnoverReport[]
@@ -291,6 +296,7 @@ model Site {
   @@index([status])
   @@index([deletedAt])
   @@index([name])
+  @@index([templateId])
   @@map("sites")
 }
 
@@ -348,8 +354,38 @@ model Session {
 
 /// A Monthly column definition. Adding a row here adds a column to the UI, the
 /// import template, and the export — with no migration and no deploy.
+/// A named set of Monthly columns — a report layout for a brand (e.g. PNG, IDN).
+///
+/// A column whose `templateId` is null is shared by every template — the common
+/// financial fields (deposit, withdraw, turnover, …). A site's `templateId`
+/// chooses which template's columns its reports use: shared columns plus that
+/// template's own. Keys stay globally unique, so aggregates that address a
+/// column by key (the dashboard) are unaffected.
+model MonthlyTemplate {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  code String @unique @db.VarChar(32)
+  name String @db.VarChar(191)
+
+  /// Display order in template pickers.
+  position Int @default(0)
+
+  columns MonthlyColumn[]
+  sites   Site[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("monthly_templates")
+}
+
 model MonthlyColumn {
   id String @id @default(uuid(7)) @db.Uuid
+
+  /// The template this column belongs to. Null means the column is shared by
+  /// every template. `key` is unique across all columns regardless.
+  templateId String?          @db.Uuid
+  template   MonthlyTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
   key   String @unique @db.VarChar(64)
   label String @db.VarChar(128)
@@ -396,6 +432,7 @@ model MonthlyColumn {
 
   @@index([position])
   @@index([deletedAt])
+  @@index([templateId])
   @@map("monthly_columns")
 }
 
