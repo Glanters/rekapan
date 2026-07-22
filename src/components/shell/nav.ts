@@ -1,5 +1,6 @@
 import {
   Building2,
+  CalendarCheck,
   ClipboardList,
   Columns3,
   Gamepad2,
@@ -48,6 +49,13 @@ export const NAV_SECTIONS: NavSection[] = [
         href: '/dashboard',
         icon: LayoutDashboard,
         permission: 'dashboard.view',
+      },
+      {
+        label: 'Kelengkapan',
+        href: '/completeness',
+        icon: CalendarCheck,
+        permission: 'dashboard.view',
+        matchPrefix: true,
       },
     ],
   },
