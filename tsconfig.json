@@ -13,6 +13,24 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
+
+    // -- Strictness beyond `strict: true` -----------------------------------
+    // Indexing an array or record yields `T | undefined`. Catches the classic
+    // `arr[0].foo` crash that `strict` alone lets through.
+    "noUncheckedIndexedAccess": true,
+    // Overriding a base member requires the `override` keyword, so renaming a
+    // base method surfaces as an error instead of a silently orphaned method.
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    // Windows and macOS are case-insensitive; Linux CI is not. This makes the
+    // mismatch fail locally rather than only in the deploy pipeline.
+    "forceConsistentCasingInFileNames": true,
+    // Imports are emitted exactly as written, so anything used only as a type
+    // must say `import type`. Removes ambiguity for the bundler.
+    "verbatimModuleSyntax": true,
+
     "plugins": [
       {
         "name": "next"
@@ -23,5 +41,7 @@
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  // `src/generated` holds the Prisma client, which is emitted code and does not
+  // satisfy the rules above (unused params, unchecked indexing, and so on).
+  "exclude": ["node_modules", "src/generated", "src/generated/**/*"]
 }

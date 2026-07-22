@@ -1,0 +1,805 @@
+// ============================================================================
+// Enterprise Monthly & Turnover Management System
+// ----------------------------------------------------------------------------
+// Design notes that are not obvious from the models themselves:
+//
+// IDENTITY SPLIT
+//   Account Center is an identity provider only: it answers "are these
+//   credentials valid?". Everything about authorisation — role, permissions,
+//   site membership, activation status — lives here. A user who authenticates
+//   successfully but has no ACTIVE local record is denied access, so a leaked
+//   Account Center credential grants nothing until an admin approves it.
+//
+// UUIDv7 PRIMARY KEYS
+//   v7 is time-ordered, so inserts land at the right edge of the B-tree. Random
+//   v4 keys scatter page splits across the whole index and bloat it badly at the
+//   row counts these tables are sized for.
+//
+// EAV FOR REPORT DATA
+//   Monthly columns and Turnover games are rows, not columns, so admins add them
+//   without a migration. The cost is that aggregation needs a join; it is paid
+//   back with covering indexes on (columnId, reportId) and, for dashboard
+//   rollups, materialised views defined in a follow-up SQL migration.
+//
+// AUTHORSHIP STAMPS
+//   createdById / updatedById are plain UUID columns rather than Prisma
+//   relations, and are deliberately NOT indexed — they are displayed, never
+//   filtered on, and an index per table would cost write throughput on the
+//   hottest tables to serve a query nobody runs. Add one if a "records created
+//   by X" screen ever appears.
+//   Modelling them as relations would hang ~20 unused back-reference
+//   arrays off User for no query benefit. Relations are declared only where the
+//   association is actually traversed (uploader, actor, activatedBy). AuditLog
+//   remains the authoritative record of who changed what.
+//
+// SOFT DELETE
+//   deletedAt is nullable on business tables. Prisma cannot express partial
+//   indexes, so `WHERE deleted_at IS NULL` variants are added in raw SQL
+//   migrations — without them every lookup pays for rows nobody can see.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+/// Gate that every login passes through. Users are auto-provisioned as PENDING
+/// on first successful Account Center authentication and stay locked out until
+/// an administrator activates them and assigns at least one site.
+enum UserStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  INACTIVE
+}
+
+enum SiteStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+/// Drives both the input widget rendered in the UI and which value column is
+/// populated on MonthlyValue.
+enum ColumnDataType {
+  CURRENCY
+  DECIMAL
+  INTEGER
+  PERCENT
+  TEXT
+  DATE
+  BOOLEAN
+}
+
+enum ReportStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  LOCKED
+}
+
+enum JobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum ImportKind {
+  MONTHLY
+  TURNOVER
+}
+
+/// How a Monthly column participates in the derived result ("Hasil").
+///
+/// RESULT is a member of the same enum rather than a separate boolean because
+/// the states are genuinely exclusive: the column holding the result cannot
+/// also contribute to it. One enum makes that impossible to express, where two
+/// fields would allow the contradiction and need a check constraint to forbid it.
+enum ResultEffect {
+  /// Recorded but excluded from the calculation — counts, reference figures.
+  NEUTRAL
+  /// Added to the result. Deposit and similar inflows.
+  ADD
+  /// Subtracted from the result. Withdrawals, promos, bonuses.
+  SUBTRACT
+  /// This column IS the result. Computed, never entered by hand.
+  RESULT
+}
+
+/// Where a Monthly column's value comes from.
+///
+/// Separate from ResultEffect on purpose: that answers "how does this column
+/// feed Hasil", this answers "who writes this column's value". A column can be
+/// derived and still be NEUTRAL toward the result, which is exactly the case
+/// for the validation total.
+enum ColumnComputation {
+  /// Entered by an operator.
+  NONE
+  /// Sum of the per-bank member counts for the same report.
+  VALIDATION_TOTAL
+}
+
+/// Which report family a gallery image belongs to.
+///
+/// Chosen explicitly at upload time rather than inferred. There is no "other"
+/// member on purpose: a catch-all becomes the default choice, and the bucket
+/// fills with images nobody can later attribute to anything.
+enum ImageCategory {
+  MONTHLY
+  TURNOVER
+}
+
+enum ExportFormat {
+  XLSX
+  CSV
+  PDF
+}
+
+// ============================================================================
+// IDENTITY & ACCESS CONTROL
+// ============================================================================
+
+model User {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  /// Opaque identifier returned by Account Center, when it supplies one.
+  /// Nullable because email is the join key we can always rely on.
+  externalId String? @unique @db.VarChar(191)
+
+  /// Lowercased at write time; the unique index is what prevents duplicate
+  /// provisioning when Account Center varies the casing between logins.
+  email     String  @unique @db.VarChar(191)
+  name      String  @db.VarChar(191)
+  avatarUrl String? @db.Text
+
+  status UserStatus @default(PENDING)
+
+  roleId String? @db.Uuid
+  role   Role?   @relation(fields: [roleId], references: [id], onDelete: SetNull)
+
+  /// Set when an administrator moves the account out of PENDING.
+  activatedAt   DateTime?
+  activatedById String?   @db.Uuid
+  activatedBy   User?     @relation("UserActivations", fields: [activatedById], references: [id], onDelete: SetNull)
+  activated     User[]    @relation("UserActivations")
+
+  lastLoginAt DateTime?
+  lastLoginIp String?   @db.VarChar(45)
+
+  sites     UserSite[]
+  sessions  Session[]
+  images    ImageAsset[]
+  auditLogs AuditLog[]
+  imports   ImportJob[]
+  exports   ExportJob[]
+  downloads DownloadJob[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+  createdById String?   @db.Uuid
+  updatedById String?   @db.Uuid
+
+  @@index([status])
+  @@index([roleId])
+  @@index([deletedAt])
+  @@index([createdAt(sort: Desc)])
+  @@map("users")
+}
+
+model Role {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  /// Stable machine key (ROOT, SUPER_ADMIN, ...). Code branches on this, never
+  /// on the display name.
+  key         String  @unique @db.VarChar(64)
+  name        String  @db.VarChar(128)
+  description String? @db.Text
+
+  /// Lower number = more authority. Used to stop a user from granting or
+  /// editing a role at or above their own level.
+  level Int @default(100)
+
+  /// System roles cannot be renamed or deleted through the UI.
+  isSystem Boolean @default(false)
+
+  permissions RolePermission[]
+  users       User[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+  createdById String?   @db.Uuid
+  updatedById String?   @db.Uuid
+
+  @@index([level])
+  @@index([deletedAt])
+  @@map("roles")
+}
+
+model Permission {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  /// Dotted key, e.g. "monthly.create". The single source of truth for the
+  /// generated PermissionKey union in application code.
+  key String @unique @db.VarChar(96)
+
+  /// Grouping used to lay out the role editor.
+  module      String  @db.VarChar(64)
+  action      String  @db.VarChar(64)
+  description String? @db.Text
+
+  roles RolePermission[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([module])
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime @default(now())
+  createdById String?  @db.Uuid
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permissions")
+}
+
+model Site {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  /// Short human-facing key (JKT, BDG). Also the join key for Excel imports,
+  /// where operators type the code rather than a UUID.
+  code String @unique @db.VarChar(32)
+  name String @db.VarChar(191)
+
+  logoUrl  String?    @db.Text
+  timezone String     @default("Asia/Jakarta") @db.VarChar(64)
+  currency String     @default("IDR") @db.VarChar(8)
+  status   SiteStatus @default(ACTIVE)
+
+  users           UserSite[]
+  monthlyReports  MonthlyReport[]
+  turnoverReports TurnoverReport[]
+  images          ImageAsset[]
+  imports         ImportJob[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+  createdById String?   @db.Uuid
+  updatedById String?   @db.Uuid
+
+  @@index([status])
+  @@index([deletedAt])
+  @@index([name])
+  @@map("sites")
+}
+
+/// Site membership. This table is the entire basis of data isolation: every
+/// scoped query resolves the caller's site IDs through it, and Root is the only
+/// principal permitted to bypass the filter.
+model UserSite {
+  userId String @db.Uuid
+  siteId String @db.Uuid
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  assignedAt   DateTime @default(now())
+  assignedById String?  @db.Uuid
+
+  @@id([userId, siteId])
+  @@index([siteId])
+  @@map("user_sites")
+}
+
+/// Server-side session. The Account Center JWT is held here, encrypted at rest,
+/// so it never travels to the browser; the client only ever carries an opaque
+/// session id in an httpOnly cookie.
+model Session {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 of the cookie value. A database leak must not yield live sessions.
+  tokenHash String @unique @db.VarChar(64)
+
+  /// AES-GCM ciphertext of the upstream Account Center JWT.
+  accountCenterToken        String?   @db.Text
+  accountCenterTokenExpires DateTime?
+
+  ip        String? @db.VarChar(45)
+  userAgent String? @db.Text
+
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastSeenAt DateTime  @default(now())
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ============================================================================
+// MONTHLY (entity–attribute–value)
+// ============================================================================
+
+/// A Monthly column definition. Adding a row here adds a column to the UI, the
+/// import template, and the export — with no migration and no deploy.
+model MonthlyColumn {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  key   String @unique @db.VarChar(64)
+  label String @db.VarChar(128)
+
+  dataType ColumnDataType @default(CURRENCY)
+
+  /// Optional heading used to group columns under a shared header.
+  group String? @db.VarChar(64)
+
+  /// Display order, sparse (10, 20, 30) so columns can be inserted between
+  /// existing ones without renumbering the table.
+  position Int @default(0)
+
+  /// Digits after the decimal point when rendering.
+  precision Int @default(2)
+
+  unit        String? @db.VarChar(16)
+  description String? @db.Text
+
+  isRequired      Boolean @default(false)
+  isVisible       Boolean @default(true)
+  isSystem        Boolean @default(false)
+  includeInTotals Boolean @default(true)
+
+  /// Contribution to the derived result. NEUTRAL by default, so a newly added
+  /// column never silently alters figures the operator is already reading.
+  resultEffect ResultEffect @default(NEUTRAL)
+
+  /// Whether the value is entered or computed. Computed columns are read-only
+  /// in the entry form and ignore any value submitted for them.
+  computation ColumnComputation @default(NONE)
+
+  /// Optional spreadsheet-style expression referencing other column keys, for
+  /// derived columns such as profit. Null means the column is entered by hand.
+  formula String? @db.Text
+
+  values MonthlyValue[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+  createdById String?   @db.Uuid
+  updatedById String?   @db.Uuid
+
+  @@index([position])
+  @@index([deletedAt])
+  @@map("monthly_columns")
+}
+
+model MonthlyReport {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  siteId String @db.Uuid
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Restrict)
+
+  /// Date-only; one report per site per day.
+  reportDate DateTime @db.Date
+
+  status ReportStatus @default(DRAFT)
+  note   String?      @db.Text
+
+  values      MonthlyValue[]
+  validations MonthlyValidation[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+  createdById String?   @db.Uuid
+  updatedById String?   @db.Uuid
+
+  /// Also the guard that makes Excel imports idempotent.
+  @@unique([siteId, reportDate])
+  @@index([reportDate(sort: Desc)])
+  @@index([siteId, reportDate(sort: Desc)])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("monthly_reports")
+}
+
+model MonthlyValue {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  reportId String        @db.Uuid
+  report   MonthlyReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  columnId String        @db.Uuid
+  column   MonthlyColumn @relation(fields: [columnId], references: [id], onDelete: Restrict)
+
+  /// Exactly one value column is populated, chosen by the column's dataType.
+  /// Decimal(20,4) holds sixteen integer digits — far beyond any realistic
+  /// rupiah total — without the rounding drift a float would introduce.
+  valueNumeric Decimal?  @db.Decimal(20, 4)
+  valueText    String?   @db.Text
+  valueDate    DateTime? @db.Date
+  valueBool    Boolean?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([reportId, columnId])
+  /// Column-first ordering: dashboard rollups filter by column across many
+  /// reports, which the report-first unique index above cannot serve.
+  @@index([columnId, reportId])
+  @@map("monthly_values")
+}
+
+/// A bank members can register through.
+///
+/// Structurally the same idea as TurnoverGame: rows here are the columns of the
+/// per-bank validation breakdown, so an administrator adds a bank without a
+/// migration and it appears in every Monthly entry form.
+model Bank {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  code String @unique @db.VarChar(32)
+  name String @db.VarChar(128)
+
+  position Int     @default(0)
+  logoUrl  String? @db.Text
+  isActive Boolean @default(true)
+
+  validations MonthlyValidation[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+  createdById String?   @db.Uuid
+  updatedById String?   @db.Uuid
+
+  @@index([position])
+  @@index([deletedAt])
+  @@map("banks")
+}
+
+/// How many members registered through one bank on one report's day.
+///
+/// A head count, not an amount — which is why it is an Int rather than the
+/// Decimal the money tables use. Summing these gives the Monthly "Validasi"
+/// figure, and that total is derived rather than stored so the two can never
+/// disagree.
+model MonthlyValidation {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  reportId String        @db.Uuid
+  report   MonthlyReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  bankId String @db.Uuid
+  bank   Bank   @relation(fields: [bankId], references: [id], onDelete: Restrict)
+
+  memberCount Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([reportId, bankId])
+  @@index([bankId, reportId])
+  @@map("monthly_validations")
+}
+
+// ============================================================================
+// TURNOVER (entity–attribute–value)
+// ============================================================================
+
+/// A game is a Turnover column. Adding a row here adds a column to the table.
+model TurnoverGame {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  code String @unique @db.VarChar(64)
+  name String @db.VarChar(128)
+
+  /// Slot, Live Game, Sportbook — also used for the grouped column headers.
+  category String? @db.VarChar(64)
+
+  position Int     @default(0)
+  logoUrl  String? @db.Text
+  isActive Boolean @default(true)
+
+  values TurnoverValue[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+  createdById String?   @db.Uuid
+  updatedById String?   @db.Uuid
+
+  @@index([position])
+  @@index([category])
+  @@index([deletedAt])
+  @@map("turnover_games")
+}
+
+model TurnoverReport {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  siteId String @db.Uuid
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Restrict)
+
+  reportDate DateTime     @db.Date
+  status     ReportStatus @default(DRAFT)
+  note       String?      @db.Text
+
+  values TurnoverValue[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+  createdById String?   @db.Uuid
+  updatedById String?   @db.Uuid
+
+  @@unique([siteId, reportDate])
+  @@index([reportDate(sort: Desc)])
+  @@index([siteId, reportDate(sort: Desc)])
+  @@index([status])
+  @@index([deletedAt])
+  @@map("turnover_reports")
+}
+
+model TurnoverValue {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  reportId String         @db.Uuid
+  report   TurnoverReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  gameId String       @db.Uuid
+  game   TurnoverGame @relation(fields: [gameId], references: [id], onDelete: Restrict)
+
+  amount Decimal @default(0) @db.Decimal(20, 4)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([reportId, gameId])
+  @@index([gameId, reportId])
+  @@map("turnover_values")
+}
+
+// ============================================================================
+// GALLERY / CDN ASSETS
+// ============================================================================
+
+/// Metadata only. Bytes live in S3-compatible object storage; this table never
+/// holds image data.
+model ImageAsset {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  siteId String @db.Uuid
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Restrict)
+
+  uploaderId String @db.Uuid
+  uploader   User   @relation(fields: [uploaderId], references: [id], onDelete: Restrict)
+
+  /// Whether this image supports a Monthly or a Turnover report. Required, so
+  /// every image is attributable; the uploader picks it when uploading.
+  category ImageCategory
+
+  originalName String @db.VarChar(255)
+  /// Storage object key, unique per bucket.
+  fileName     String @unique @db.VarChar(255)
+  extension    String @db.VarChar(16)
+  mimeType     String @db.VarChar(128)
+  size         BigInt
+
+  cdnUrl       String  @db.Text
+  thumbnailUrl String? @db.Text
+
+  width  Int?
+  height Int?
+
+  /// SHA-256 of the bytes, for duplicate detection within a site.
+  checksum String? @db.VarChar(64)
+
+  /// Business date the image belongs to, which is not always the row's
+  /// createdAt — backfilled uploads carry their original date.
+  uploadDate DateTime @db.Date
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+  createdById String?   @db.Uuid
+  updatedById String?   @db.Uuid
+
+  @@index([siteId, uploadDate(sort: Desc)])
+  @@index([uploaderId, uploadDate(sort: Desc)])
+  @@index([uploadDate(sort: Desc)])
+  @@index([siteId, checksum])
+  /// Serves the gallery's default view: one site, one category, newest first.
+  @@index([siteId, category, uploadDate(sort: Desc)])
+  @@index([deletedAt])
+  @@map("image_assets")
+}
+
+// ============================================================================
+// OPERATIONS: audit, import, export, background downloads, settings
+// ============================================================================
+
+/// Append-only. Grows without bound, so it is a partitioning candidate: the
+/// follow-up SQL migration converts it to monthly RANGE partitions on createdAt.
+model AuditLog {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  actorId String? @db.Uuid
+  actor   User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  /// Denormalised so the trail survives deletion of the user record.
+  actorEmail String? @db.VarChar(191)
+
+  action String  @db.VarChar(64)
+  module String  @db.VarChar(64)
+  siteId String? @db.Uuid
+
+  entityType String? @db.VarChar(64)
+  entityId   String? @db.VarChar(64)
+
+  /// Field-level diff. Sensitive values are redacted before they reach here.
+  before Json? @db.JsonB
+  after  Json? @db.JsonB
+
+  ip        String? @db.VarChar(45)
+  userAgent String? @db.Text
+  /// Correlates every log line emitted while handling one HTTP request.
+  requestId String? @db.VarChar(64)
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt(sort: Desc)])
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([module, createdAt(sort: Desc)])
+  @@index([entityType, entityId])
+  @@index([siteId, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+model ImportJob {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  kind   ImportKind
+  status JobStatus  @default(QUEUED)
+
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  siteId String? @db.Uuid
+  site   Site?   @relation(fields: [siteId], references: [id], onDelete: SetNull)
+
+  originalName String  @db.VarChar(255)
+  fileUrl      String? @db.Text
+  fileSize     BigInt?
+
+  totalRows   Int @default(0)
+  successRows Int @default(0)
+  failedRows  Int @default(0)
+
+  /// Per-row validation failures, kept so the operator can fix and re-upload.
+  errors Json? @db.JsonB
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@map("import_jobs")
+}
+
+model ExportJob {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  format ExportFormat
+  status JobStatus    @default(QUEUED)
+  module String       @db.VarChar(64)
+
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  /// The exact filter set the export was generated from, so a result can be
+  /// reproduced or audited later.
+  filters Json? @db.JsonB
+
+  fileUrl   String?   @db.Text
+  fileSize  BigInt?
+  rowCount  Int       @default(0)
+  expiresAt DateTime?
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("export_jobs")
+}
+
+/// Bulk gallery downloads. Small selections stream a ZIP synchronously; large
+/// ones are queued here so the request does not hold a connection open for
+/// minutes, and the user is notified when the archive is ready.
+model DownloadJob {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  status JobStatus @default(QUEUED)
+
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Site / date-range / uploader criteria the archive was built from.
+  filters Json @db.JsonB
+
+  itemCount Int     @default(0)
+  sizeBytes BigInt?
+
+  fileUrl String? @db.Text
+  /// Archives are disposable; a sweeper removes them past this timestamp.
+  expiresAt DateTime?
+
+  error String? @db.Text
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([expiresAt])
+  @@map("download_jobs")
+}
+
+/// Key–value application settings. Null siteId is the global default; a row
+/// with a siteId overrides it for that site.
+model Setting {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  key   String @db.VarChar(128)
+  value Json   @db.JsonB
+
+  siteId String? @db.Uuid
+
+  description String? @db.Text
+  isSecret    Boolean @default(false)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  updatedById String?  @db.Uuid
+
+  @@unique([key, siteId])
+  @@index([siteId])
+  @@map("settings")
+}

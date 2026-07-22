@@ -1,0 +1,20 @@
+# Build output
+.next
+out
+build
+coverage
+
+# Dependencies
+node_modules
+
+# Generated code — Prisma owns this directory
+src/generated
+
+# Lockfiles are machine-written
+package-lock.json
+
+# Golden vectors produced by tools/php-parity/generate-vectors.php. The tests
+# compare these bytes against PHP output, so they must not be reformatted.
+src/lib/account-center/__fixtures__
+
+# Note: docs/ and *.md are intentionally NOT ignored — they should be formatted.

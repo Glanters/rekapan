@@ -1,0 +1,43 @@
+# systemd unit — runs the Next.js app on port 7564.
+#
+#   sudo cp rekapan.service /etc/systemd/system/rekapan.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now rekapan
+#   sudo systemctl status rekapan
+#
+# Adjust WorkingDirectory, User/Group, and the npm path (`which npm`) to match
+# your server.
+
+[Unit]
+Description=Monthly & Turnover app (rekapan.site) — Next.js on :7564
+After=network.target
+# If Postgres/Redis run as Docker containers on the same host:
+# After=docker.service
+# Wants=docker.service
+
+[Service]
+Type=simple
+# Where the built app lives on the server.
+WorkingDirectory=/opt/rekapan
+Environment=NODE_ENV=production
+# Production configuration. Next.js also auto-loads a .env file in
+# WorkingDirectory, so either mechanism works — pick one and keep secrets out of
+# version control. Required keys: DATABASE_URL, REDIS_URL, S3_*, ACCOUNT_CENTER_*,
+# SESSION_SECRET, ENCRYPTION_KEY, APP_URL=https://rekapan.site.
+EnvironmentFile=/opt/rekapan/.env
+# Runs `next start -p 7564` (defined in package.json). Verify the npm path.
+ExecStart=/usr/bin/npm run start
+Restart=on-failure
+RestartSec=5
+
+# Run as an unprivileged user you create for the app (not root).
+User=rekapan
+Group=rekapan
+
+# Light hardening.
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

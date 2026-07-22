@@ -1,0 +1,261 @@
+{
+    "_comment": "GENERATED FILE - do not edit by hand. Run: php tools/php-parity/generate-vectors.php",
+    "phpVersion": "8.3.30",
+    "cipher": "AES-256-CBC",
+    "secret": "account-center-shared-secret-2023",
+    "key": "ad0cd02f3cb990a5705586f8c2c29483",
+    "clientId": "monthly-turnover-app",
+    "aesVectors": [
+        {
+            "label": "ascii-short",
+            "iv": "0123456789abcdef",
+            "ivBase64": "MDEyMzQ1Njc4OWFiY2RlZg==",
+            "plaintext": "hello",
+            "ciphertext": "cXhWcEdvVWIxOTFSWWpKTnh5VExkZz09",
+            "decrypted": "hello",
+            "roundTripOk": true,
+            "innerBase64": "qxVpGoUb191RYjJNxyTLdg=="
+        },
+        {
+            "label": "password-like",
+            "iv": "fedcba9876543210",
+            "ivBase64": "ZmVkY2JhOTg3NjU0MzIxMA==",
+            "plaintext": "P@ssw0rd!123",
+            "ciphertext": "YmFvM2U4OWgvQ24wV3pOd2lLZndmQT09",
+            "decrypted": "P@ssw0rd!123",
+            "roundTripOk": true,
+            "innerBase64": "bao3e89h/Cn0WzNwiKfwfA=="
+        },
+        {
+            "label": "json-payload",
+            "iv": "a1b2c3d4e5f60718",
+            "ivBase64": "YTFiMmMzZDRlNWY2MDcxOA==",
+            "plaintext": "{\"email\":\"user@example.com\",\"password\":\"secret\"}",
+            "ciphertext": "VFAxSFV0aXpoR0VCSVk4MlR5NU9YY0JjZk01QWFsckNhMUI0cFQ4bWMyakZwV0cyT3hXS3MvNXgrZG9VczhXT0dkR0I2T0xwQzlsb2hPQVNBMVYxalE9PQ==",
+            "decrypted": "{\"email\":\"user@example.com\",\"password\":\"secret\"}",
+            "roundTripOk": true,
+            "innerBase64": "TP1HUtizhGEBIY82Ty5OXcBcfM5AalrCa1B4pT8mc2jFpWG2OxWKs/5x+doUs8WOGdGB6OLpC9lohOASA1V1jQ=="
+        },
+        {
+            "label": "exact-block-16",
+            "iv": "00112233445566aa",
+            "ivBase64": "MDAxMTIyMzM0NDU1NjZhYQ==",
+            "plaintext": "AAAAAAAAAAAAAAAA",
+            "ciphertext": "L2JINkpiVWdwU041OTdWbThYQWRZbCtobkUyQWJnZXpjN3ZTZ2wzRzVVbz0=",
+            "decrypted": "AAAAAAAAAAAAAAAA",
+            "roundTripOk": true,
+            "innerBase64": "/bH6JbUgpSN597Vm8XAdYl+hnE2Abgezc7vSgl3G5Uo="
+        },
+        {
+            "label": "two-blocks-32",
+            "iv": "aa66554433221100",
+            "ivBase64": "YWE2NjU1NDQzMzIyMTEwMA==",
+            "plaintext": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+            "ciphertext": "TlNzNW0vbTBmVUZnbzNOd3dmL1VkK1c2ZnA5cDg2b1JPYkhjNVFQSjRwbU81Rm94VWJYdGc1Q3dybnNiSEo2ag==",
+            "decrypted": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+            "roundTripOk": true,
+            "innerBase64": "NSs5m/m0fUFgo3Nwwf/Ud+W6fp9p86oRObHc5QPJ4pmO5FoxUbXtg5CwrnsbHJ6j"
+        },
+        {
+            "label": "empty-string",
+            "iv": "1234567890abcdef",
+            "ivBase64": "MTIzNDU2Nzg5MGFiY2RlZg==",
+            "plaintext": "",
+            "ciphertext": "OEZISXRnNmF0R3gzOFJBbEZHcWZIUT09",
+            "decrypted": "",
+            "roundTripOk": true,
+            "innerBase64": "8FHItg6atGx38RAlFGqfHQ=="
+        },
+        {
+            "label": "utf8-multibyte",
+            "iv": "ffeeddccbbaa9988",
+            "ivBase64": "ZmZlZWRkY2NiYmFhOTk4OA==",
+            "plaintext": "unicode: äöü 日本語 🎉 emoji",
+            "ciphertext": "RWVvWHcxUGJES05OSklSbVJid2Z0RmZ0WmJOb29STXcwY1N6aEF4b0F4cFhRUlpBTm5ra00wSjliOVM1UkZQMw==",
+            "decrypted": "unicode: äöü 日本語 🎉 emoji",
+            "roundTripOk": true,
+            "innerBase64": "EeoXw1PbDKNNJIRmRbwftFftZbNooRMw0cSzhAxoAxpXQRZANnkkM0J9b9S5RFP3"
+        },
+        {
+            "label": "json-special-chars",
+            "iv": "9988776655443322",
+            "ivBase64": "OTk4ODc3NjY1NTQ0MzMyMg==",
+            "plaintext": "slash/backslash\\quote\"newline\ntab\tend",
+            "ciphertext": "Yk9HRU1TYVBpRVArU1lxTi8zb21MWW9rdzFTZUVRVVQ1N3dRUEQxUVhzbEp3VE43ZUlxRlNlaGRWT3JJQVZmZA==",
+            "decrypted": "slash/backslash\\quote\"newline\ntab\tend",
+            "roundTripOk": true,
+            "innerBase64": "bOGEMSaPiEP+SYqN/3omLYokw1SeEQUT57wQPD1QXslJwTN7eIqFSehdVOrIAVfd"
+        },
+        {
+            "label": "long-512",
+            "iv": "2233445566778899",
+            "ivBase64": "MjIzMzQ0NTU2Njc3ODg5OQ==",
+            "plaintext": "The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. ",
+            "ciphertext": "MnBzRFRyNlNIb3RGV1o4VlE5clFnMEtNZEhuVEx3TmRaOEpzSG5CVFVGNkV0NmdaSFFEQ241V1lBS0k0Z0sxVVdDU1JzZjJhUlF5bURLbi9qN0pydGcrenNRRUtLSmhyV2ZraFZOWjVNeW5LRmlZSHo3RHZ2SGxCb2tDcE9jd3J0N3d6UlJUc0syLzgzODFvaVNLbGU4a0lOUmo5MDVML0hwUytSUUI4MTZuVUY5NzRSOEZpRXU2RzJnUzdhMGtEbEVQd1hlNzhKUGwzQUxtRFdUUXhpbUlCM3hUNTNBRDV6NHAweE5uRlJxaFliSTBVWnpibGozZHBvN0ovZldPQ3VJOTZVdjVUdnMzZ1JhTnUzLzZvWXN1R0ZFUFl0VXdMTzhiVFJsbVN4YjZOR0pYb1U1UFpjNTdaamMrQVZ0WE9SY3ZhckMwUW9BRUZaZFkzZi9LclZVZy9zSG80bWxDWG1YT3VMbHhTMDJLZzFXRnFFamlsa0tBdEU0RFJBaHVrR05FVVVnQXdCRUFDQkxSdUZ1aFNSWHRUdU9XdHpCdW9tUFFQL1hIbDBBcHdNY0tjeTZXWFJKL2hVbWpud3NFQ0lOaGFpSERYMmw2U3JTdk91djdvQXdPUzhOYVdpRHEza3laZ3YyM1Mzcy9aamowN2lrL1lQbkRqVWhKZU5jRkJhSkVrSFhkMEQxbUdibWRSUVd5cmZlbDhrdHRRM3pReUVMekdiSmk4enM1NU1ZNWZydTFvajBDOEpmMEpMTUNXSVFGNktpdkl2Q3Y1dHU0aU02aXpwWEFuQzNMMm1Ec2h4a09adG1ybkhjczcrYklOakdQKzYyNG1rQWpEWmllend2QjVScmdROXVzNGd2YVl5a1FMcE9MbGZsblA0bUN0d3IxelFwaTJ5Mld1V2kxYU1FSDdJUzEwRXNRQVRIRFA=",
+            "decrypted": "The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. The quick brown fox. ",
+            "roundTripOk": true,
+            "innerBase64": "2psDTr6SHotFWZ8VQ9rQg0KMdHnTLwNdZ8JsHnBTUF6Et6gZHQDCn5WYAKI4gK1UWCSRsf2aRQymDKn/j7Jrtg+zsQEKKJhrWfkhVNZ5MynKFiYHz7DvvHlBokCpOcwrt7wzRRTsK2/8381oiSKle8kINRj905L/HpS+RQB816nUF974R8FiEu6G2gS7a0kDlEPwXe78JPl3ALmDWTQximIB3xT53AD5z4p0xNnFRqhYbI0UZzblj3dpo7J/fWOCuI96Uv5Tvs3gRaNu3/6oYsuGFEPYtUwLO8bTRlmSxb6NGJXoU5PZc57Zjc+AVtXORcvarC0QoAEFZdY3f/KrVUg/sHo4mlCXmXOuLlxS02Kg1WFqEjilkKAtE4DRAhukGNEUUgAwBEACBLRuFuhSRXtTuOWtzBuomPQP/XHl0ApwMcKcy6WXRJ/hUmjnwsECINhaiHDX2l6SrSvOuv7oAwOS8NaWiDq3kyZgv23S3s/Zjj07ik/YPnDjUhJeNcFBaJEkHXd0D1mGbmdRQWyrfel8kttQ3zQyELzGbJi8zs55MY5fru1oj0C8Jf0JLMCWIQF6KivIvCv5tu4iM6izpXAnC3L2mDshxkOZtmrnHcs7+bINjGP+624mkAjDZiezwvB5RrgQ9us4gvaYykQLpOLlflnP4mCtwr1zQpi2y2WuWi1aMEH7IS10EsQATHDP"
+        }
+    ],
+    "loginPayloads": [
+        {
+            "label": "simple",
+            "iv": "0f1e2d3c4b5a6978",
+            "email": "operator@example.com",
+            "password": "Str0ngP@ss!",
+            "encryptedPassword": "NXFrWHN4bktBQTlQK2ZiR3FZUEs3UT09",
+            "jsonBody": "{\"email\":\"operator@example.com\",\"password\":\"NXFrWHN4bktBQTlQK2ZiR3FZUEs3UT09\"}",
+            "signature": "WDZIWm51WFBSMFhNUVYrdGowd3VtOFEvUUk5WS9VbnllNEJmSkVoZjk2ZnJmVXRZamNYUHM4NS9zUWJKb2xyM2RSVnppMVlnMWcxUUFUSmwwUXJnVExCRXVpeTRxR3FjZkZiSk1QNEdPKzQ9",
+            "jsonBodyHasEscapedSlash": false,
+            "headers": {
+                "X-Client-Id": "monthly-turnover-app",
+                "X-Client-Iv": "MGYxZTJkM2M0YjVhNjk3OA==",
+                "Signature": "WDZIWm51WFBSMFhNUVYrdGowd3VtOFEvUUk5WS9VbnllNEJmSkVoZjk2ZnJmVXRZamNYUHM4NS9zUWJKb2xyM2RSVnppMVlnMWcxUUFUSmwwUXJnVExCRXVpeTRxR3FjZkZiSk1QNEdPKzQ9"
+            }
+        },
+        {
+            "label": "plus-in-email",
+            "iv": "78695a4b3c2d1e0f",
+            "email": "ops+jakarta@example.co.id",
+            "password": "a",
+            "encryptedPassword": "ektVUjlWZXdVdm50b0dCalhYT0Nidz09",
+            "jsonBody": "{\"email\":\"ops+jakarta@example.co.id\",\"password\":\"ektVUjlWZXdVdm50b0dCalhYT0Nidz09\"}",
+            "signature": "N3UwcFRuR01teE0yankyeTZrN0hvUXk5OHhHdVBEQkRqbXQyajFWRVdpZEx4MkExWFNIcVA0N2NoVnlQbjEvbEtFaitHS3dGQUJpVk02Y0Y4Z1VRMXV0aGRoeE5mWmtnNVNkWTR0Q1RGNVRMbkZ5cUdGMXRmWjZBbmlPZnhlK2I=",
+            "jsonBodyHasEscapedSlash": false,
+            "headers": {
+                "X-Client-Id": "monthly-turnover-app",
+                "X-Client-Iv": "Nzg2OTVhNGIzYzJkMWUwZg==",
+                "Signature": "N3UwcFRuR01teE0yankyeTZrN0hvUXk5OHhHdVBEQkRqbXQyajFWRVdpZEx4MkExWFNIcVA0N2NoVnlQbjEvbEtFaitHS3dGQUJpVk02Y0Y4Z1VRMXV0aGRoeE5mWmtnNVNkWTR0Q1RGNVRMbkZ5cUdGMXRmWjZBbmlPZnhlK2I="
+            }
+        },
+        {
+            "label": "long-password",
+            "iv": "abcdef0123456789",
+            "email": "root@example.com",
+            "password": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "encryptedPassword": "Q1JvVExqZG1HakM2d3hvZjVLRnZxWmJnTDlwR0V4VjBYTGpQTGd6VStNUm8yUU9RTVFYMHUyZER4K05wRVd1Q1JDS1VJa3FKR0hBYlovWThneE5nSXNsczVhcUlLbjlZNWI5aEtRcG16Mk09",
+            "jsonBody": "{\"email\":\"root@example.com\",\"password\":\"Q1JvVExqZG1HakM2d3hvZjVLRnZxWmJnTDlwR0V4VjBYTGpQTGd6VStNUm8yUU9RTVFYMHUyZER4K05wRVd1Q1JDS1VJa3FKR0hBYlovWThneE5nSXNsczVhcUlLbjlZNWI5aEtRcG16Mk09\"}",
+            "signature": "ampNaENuQ1hDdEFPd0l1NWI4OVdmMEhDUzZyTXkyT0hRVy9VNTEyeWI5dkNZdDlheWpSSjQ5d1UvOW9ucVpwTG9QQkdOTTlUTGNLakRaTG1xR0ZMTTV6UFI3RXVUWEZ5clJFdFZuRTJiSVV4WllXeERtNHZ6U0NyVEY4engxZ2V1ZHBKY0sxR1N0cjhHY3FrazdWVlVuZFhDNXlzWERsZnlQdUdUeEZaWEtnRDY0WWJGUzJUSDVlK2NBWlo0MzlodjZlSnY3cU1JeCsrRk5US01nU0xscVpGRWY5K04xYlBNdVV6UVlUQlVXaFROTzBsU3I4K2krQjg2NkxJcHZlZQ==",
+            "jsonBodyHasEscapedSlash": false,
+            "headers": {
+                "X-Client-Id": "monthly-turnover-app",
+                "X-Client-Iv": "YWJjZGVmMDEyMzQ1Njc4OQ==",
+                "Signature": "ampNaENuQ1hDdEFPd0l1NWI4OVdmMEhDUzZyTXkyT0hRVy9VNTEyeWI5dkNZdDlheWpSSjQ5d1UvOW9ucVpwTG9QQkdOTTlUTGNLakRaTG1xR0ZMTTV6UFI3RXVUWEZ5clJFdFZuRTJiSVV4WllXeERtNHZ6U0NyVEY4engxZ2V1ZHBKY0sxR1N0cjhHY3FrazdWVlVuZFhDNXlzWERsZnlQdUdUeEZaWEtnRDY0WWJGUzJUSDVlK2NBWlo0MzlodjZlSnY3cU1JeCsrRk5US01nU0xscVpGRWY5K04xYlBNdVV6UVlUQlVXaFROTzBsU3I4K2krQjg2NkxJcHZlZQ=="
+            }
+        }
+    ],
+    "jsonVectors": [
+        {
+            "label": "plain-ascii",
+            "value": {
+                "email": "a@b.com",
+                "password": "abc"
+            },
+            "encoded": "{\"email\":\"a@b.com\",\"password\":\"abc\"}"
+        },
+        {
+            "label": "forward-slash",
+            "value": {
+                "url": "https://example.com/a/b",
+                "b64": "ab/cd+ef=="
+            },
+            "encoded": "{\"url\":\"https:\\/\\/example.com\\/a\\/b\",\"b64\":\"ab\\/cd+ef==\"}"
+        },
+        {
+            "label": "unicode-latin",
+            "value": {
+                "name": "Müller Ångström"
+            },
+            "encoded": "{\"name\":\"M\\u00fcller \\u00c5ngstr\\u00f6m\"}"
+        },
+        {
+            "label": "unicode-cjk",
+            "value": {
+                "name": "日本語のテキスト"
+            },
+            "encoded": "{\"name\":\"\\u65e5\\u672c\\u8a9e\\u306e\\u30c6\\u30ad\\u30b9\\u30c8\"}"
+        },
+        {
+            "label": "unicode-emoji",
+            "value": {
+                "msg": "done 🎉 ok"
+            },
+            "encoded": "{\"msg\":\"done \\ud83c\\udf89 ok\"}"
+        },
+        {
+            "label": "control-chars",
+            "value": {
+                "s": "line1\nline2\ttab\r\\bx\fy"
+            },
+            "encoded": "{\"s\":\"line1\\nline2\\ttab\\r\\\\bx\\fy\"}"
+        },
+        {
+            "label": "quotes-backslash",
+            "value": {
+                "s": "he said \"hi\" \\ back"
+            },
+            "encoded": "{\"s\":\"he said \\\"hi\\\" \\\\ back\"}"
+        },
+        {
+            "label": "nested",
+            "value": {
+                "a": {
+                    "b": {
+                        "c": "x/y"
+                    }
+                }
+            },
+            "encoded": "{\"a\":{\"b\":{\"c\":\"x\\/y\"}}}"
+        },
+        {
+            "label": "empty-values",
+            "value": {
+                "a": "",
+                "b": []
+            },
+            "encoded": "{\"a\":\"\",\"b\":[]}"
+        },
+        {
+            "label": "del-char",
+            "value": {
+                "s": "beforeafter"
+            },
+            "encoded": "{\"s\":\"beforeafter\"}"
+        },
+        {
+            "label": "low-control",
+            "value": {
+                "s": "\u0000\u0001\u001f"
+            },
+            "encoded": "{\"s\":\"\\u0000\\u0001\\u001f\"}"
+        },
+        {
+            "label": "html-chars",
+            "value": {
+                "s": "<a href=\"x\">&amp;</a> 'quoted'"
+            },
+            "encoded": "{\"s\":\"<a href=\\\"x\\\">&amp;<\\/a> 'quoted'\"}"
+        },
+        {
+            "label": "ascii-boundary",
+            "value": {
+                "s": "~"
+            },
+            "encoded": "{\"s\":\"~\"}"
+        },
+        {
+            "label": "base64-alphabet",
+            "value": {
+                "s": "abc+def/ghi="
+            },
+            "encoded": "{\"s\":\"abc+def\\/ghi=\"}"
+        }
+    ],
+    "structuralProperty": {
+        "description": "double-base64 output never contains + or /",
+        "trials": 20000,
+        "plusOrSlashHits": 0,
+        "holds": true,
+        "observedCharset": "012345689=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdeghijklmnopqrstuvwxyz"
+    }
+}
