@@ -8,6 +8,7 @@ import {
   Landmark,
   LayoutDashboard,
   Network,
+  Receipt,
   ScrollText,
   Settings,
   ShieldCheck,
@@ -74,6 +75,13 @@ export const NAV_SECTIONS: NavSection[] = [
         href: '/turnover',
         icon: ClipboardList,
         permission: 'turnover.view',
+        matchPrefix: true,
+      },
+      {
+        label: 'Rekap Form',
+        href: '/form-recap',
+        icon: Receipt,
+        permission: 'monthly.view',
         matchPrefix: true,
       },
       {
