@@ -1,8 +1,17 @@
 'use client';
 
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, ClipboardList, Pencil, Plus } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  ChevronLeft,
+  ChevronRight,
+  ClipboardList,
+  Loader2,
+  Pencil,
+  Plus,
+  Trash2,
+} from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
 
 import { TableImageButton } from '@/components/data-transfer/table-image-button';
 import { TransferToolbar } from '@/components/data-transfer/transfer-toolbar';
@@ -10,6 +19,14 @@ import { RecordInfoPopover } from '@/components/record-info-popover';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -34,6 +51,7 @@ interface Envelope<T> {
 interface TurnoverTableProps {
   sites: SiteRef[];
   canEdit: boolean;
+  canDelete: boolean;
   canImport: boolean;
   canExport: boolean;
 }
@@ -56,6 +74,7 @@ function defaultFrom(): string {
 export function TurnoverTable({
   sites,
   canEdit,
+  canDelete,
   canImport,
   canExport,
 }: TurnoverTableProps) {
@@ -67,6 +86,21 @@ export function TurnoverTable({
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<TurnoverRowDto | null>(null);
   const [creating, setCreating] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<TurnoverRowDto | null>(null);
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const response = await fetch(`/api/turnover/${id}`, { method: 'DELETE' });
+      const payload = (await response.json()) as { success: boolean; message: string };
+      if (!payload.success) throw new Error(payload.message);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['turnover'] });
+      setPendingDelete(null);
+      toast.success('Laporan dihapus.');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   const query = useQuery({
     queryKey: ['turnover', { from, to, siteId, page }],
@@ -267,7 +301,7 @@ export function TurnoverTable({
                     <th
                       rowSpan={2}
                       data-capture-exclude
-                      className="bg-muted/60 text-muted-foreground sticky right-0 z-20 w-20 border-l px-3 py-2 text-right font-medium"
+                      className="bg-muted/60 text-muted-foreground sticky right-0 z-20 w-28 border-l px-3 py-2 text-right font-medium"
                     >
                       Aksi
                     </th>
@@ -303,7 +337,7 @@ export function TurnoverTable({
                       </th>
                       <th
                         data-capture-exclude
-                        className="bg-background text-muted-foreground sticky right-0 z-20 w-20 border-l px-2.5 py-2 text-right font-medium"
+                        className="bg-background text-muted-foreground sticky right-0 z-20 w-28 border-l px-2.5 py-2 text-right font-medium"
                       >
                         Aksi
                       </th>
@@ -363,6 +397,17 @@ export function TurnoverTable({
                             onClick={() => setEditing(row)}
                           >
                             <Pencil className="size-4" />
+                          </Button>
+                        )}
+                        {canDelete && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Hapus laporan ${row.reportDate}`}
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() => setPendingDelete(row)}
+                          >
+                            <Trash2 className="size-4" />
                           </Button>
                         )}
                         <RecordInfoPopover
@@ -449,6 +494,43 @@ export function TurnoverTable({
           void queryClient.invalidateQueries({ queryKey: ['turnover'] });
         }}
       />
+
+      <Dialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open && !deleteMutation.isPending) setPendingDelete(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Hapus laporan</DialogTitle>
+            <DialogDescription>
+              Laporan Turnover tanggal{' '}
+              <span className="font-medium">{pendingDelete?.reportDate}</span> untuk
+              site <span className="font-medium">{pendingDelete?.siteCode}</span> akan
+              dihapus dari tabel. Penghapusan bersifat halus — data tetap tercatat di
+              audit dan dapat dipulihkan bila diperlukan.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setPendingDelete(null)}
+              disabled={deleteMutation.isPending}
+            >
+              Batal
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleteMutation.isPending}
+              onClick={() => pendingDelete && deleteMutation.mutate(pendingDelete.id)}
+            >
+              {deleteMutation.isPending && <Loader2 className="size-4 animate-spin" />}
+              Hapus
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

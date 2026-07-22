@@ -24,6 +24,7 @@ export default async function TurnoverPage() {
     <TurnoverTable
       sites={sites}
       canEdit={access.canAny('turnover.create', 'turnover.update')}
+      canDelete={access.can('turnover.delete')}
       canImport={access.can('turnover.import')}
       canExport={access.can('turnover.export')}
     />

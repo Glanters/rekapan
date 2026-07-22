@@ -24,6 +24,7 @@ export default async function MonthlyPage() {
     <MonthlyTable
       sites={sites}
       canEdit={access.canAny('monthly.create', 'monthly.update')}
+      canDelete={access.can('monthly.delete')}
       canImport={access.can('monthly.import')}
       canExport={access.can('monthly.export')}
     />

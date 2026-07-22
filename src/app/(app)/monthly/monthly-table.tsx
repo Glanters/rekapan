@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   type ColumnDef,
   type VisibilityState,
@@ -12,11 +12,14 @@ import {
   ChevronLeft,
   ChevronRight,
   Columns3,
+  Loader2,
   Pencil,
   Plus,
   Table2,
+  Trash2,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
 
 import { TableImageButton } from '@/components/data-transfer/table-image-button';
 import { TransferToolbar } from '@/components/data-transfer/transfer-toolbar';
@@ -24,6 +27,14 @@ import { RecordInfoPopover } from '@/components/record-info-popover';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -63,6 +74,7 @@ interface Envelope<T> {
 interface MonthlyTableProps {
   sites: SiteRef[];
   canEdit: boolean;
+  canDelete: boolean;
   canImport: boolean;
   canExport: boolean;
 }
@@ -114,6 +126,7 @@ const NO_TOTALS: Record<string, number> = {};
 export function MonthlyTable({
   sites,
   canEdit,
+  canDelete,
   canImport,
   canExport,
 }: MonthlyTableProps) {
@@ -126,6 +139,21 @@ export function MonthlyTable({
   const [visibility, setVisibility] = useState<VisibilityState>({});
   const [editing, setEditing] = useState<MonthlyRowDto | null>(null);
   const [creating, setCreating] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<MonthlyRowDto | null>(null);
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const response = await fetch(`/api/monthly/${id}`, { method: 'DELETE' });
+      const payload = (await response.json()) as { success: boolean; message: string };
+      if (!payload.success) throw new Error(payload.message);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['monthly'] });
+      setPendingDelete(null);
+      toast.success('Laporan dihapus.');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   const query = useQuery({
     queryKey: ['monthly', { from, to, siteId, page }],
@@ -374,7 +402,7 @@ export function MonthlyTable({
                         to find out a row can be edited at all. */}
                     <th
                       data-capture-exclude
-                      className="bg-background text-muted-foreground sticky right-0 z-20 w-20 border-l px-2.5 py-2 text-right font-medium"
+                      className="bg-background text-muted-foreground sticky right-0 z-20 w-28 border-l px-2.5 py-2 text-right font-medium"
                     >
                       Aksi
                     </th>
@@ -440,6 +468,17 @@ export function MonthlyTable({
                             onClick={() => setEditing(row.original)}
                           >
                             <Pencil className="size-4" />
+                          </Button>
+                        )}
+                        {canDelete && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Hapus laporan ${row.original.reportDate}`}
+                            className="text-muted-foreground hover:text-destructive"
+                            onClick={() => setPendingDelete(row.original)}
+                          >
+                            <Trash2 className="size-4" />
                           </Button>
                         )}
                         <RecordInfoPopover
@@ -538,6 +577,43 @@ export function MonthlyTable({
           void queryClient.invalidateQueries({ queryKey: ['monthly'] });
         }}
       />
+
+      <Dialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open && !deleteMutation.isPending) setPendingDelete(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Hapus laporan</DialogTitle>
+            <DialogDescription>
+              Laporan Monthly tanggal{' '}
+              <span className="font-medium">{pendingDelete?.reportDate}</span> untuk
+              site <span className="font-medium">{pendingDelete?.siteCode}</span> akan
+              dihapus dari tabel. Penghapusan bersifat halus — data tetap tercatat di
+              audit dan dapat dipulihkan bila diperlukan.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setPendingDelete(null)}
+              disabled={deleteMutation.isPending}
+            >
+              Batal
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleteMutation.isPending}
+              onClick={() => pendingDelete && deleteMutation.mutate(pendingDelete.id)}
+            >
+              {deleteMutation.isPending && <Loader2 className="size-4 animate-spin" />}
+              Hapus
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
