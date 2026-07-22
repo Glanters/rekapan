@@ -53,25 +53,57 @@ sudo systemctl status rekapan       # pastikan aktif di :7564
 
 > Alternatif tanpa systemd: `pm2 start npm --name rekapan -- run start`.
 
-## 3. Pasang nginx
+## 3. Sertifikat TLS — pakai config bootstrap dulu
 
-```bash
-sudo cp deploy/nginx/rekapan.site.conf /etc/nginx/sites-available/rekapan.site.conf
-sudo ln -s /etc/nginx/sites-available/rekapan.site.conf /etc/nginx/sites-enabled/
-sudo mkdir -p /var/www/certbot            # untuk tantangan ACME
-sudo nginx -t && sudo systemctl reload nginx
-```
+Config utama punya blok HTTPS yang menunjuk ke sertifikat yang **belum ada**, jadi
+`nginx -t` akan gagal bila dipasang lebih dulu. Urutan yang benar: pasang config
+**bootstrap** (HTTP saja) → ambil sertifikat → baru pindah ke config utama.
 
-## 4. Sertifikat TLS (Let's Encrypt)
+Prasyarat: **A record `rekapan.site` harus menunjuk ke IP server ini** (lihat
+"Cek domain" di bawah), jika tidak certbot gagal.
 
 ```bash
 sudo apt install certbot
+
+# a) config bootstrap (HTTP saja, hanya melayani tantangan ACME)
+sudo mkdir -p /var/www/certbot
+sudo cp deploy/nginx/rekapan.site.bootstrap.conf /etc/nginx/sites-available/
+sudo ln -s /etc/nginx/sites-available/rekapan.site.bootstrap.conf /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+
+# b) terbitkan sertifikat
 sudo certbot certonly --webroot -w /var/www/certbot -d rekapan.site -d www.rekapan.site
-sudo systemctl reload nginx
+```
+
+## 4. Aktifkan reverse proxy penuh (HTTPS)
+
+```bash
+# lepas bootstrap, pasang config utama (yang sudah punya blok HTTPS)
+sudo rm /etc/nginx/sites-enabled/rekapan.site.bootstrap.conf
+sudo cp deploy/nginx/rekapan.site.conf /etc/nginx/sites-available/rekapan.site.conf
+sudo ln -s /etc/nginx/sites-available/rekapan.site.conf /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
 ```
 
 Perpanjangan otomatis sudah dipasang certbot (`systemctl status certbot.timer`).
 Setelah reload, buka `https://rekapan.site`.
+
+### Cek domain (bila certbot gagal)
+
+certbot gagal jika `rekapan.site` tidak menunjuk ke server ini, atau ada layanan
+lain yang menjawab port 80. Diagnosa:
+
+```bash
+curl -s ifconfig.me ; echo                 # IP publik server ini
+dig +short rekapan.site                    # harus SAMA dengan IP di atas
+sudo ss -ltnp | grep ':80'                 # apa yang mendengarkan di :80 (harus nginx)
+ls -l /etc/nginx/sites-enabled/            # pastikan tak ada site lain yang bentrok
+curl -s http://rekapan.site/.well-known/acme-challenge/test   # harus 404 dari nginx, bukan JSON lain
+```
+
+Jika `curl` mengembalikan JSON seperti `{"status":1,"messages":"OK"}`, berarti
+**bukan nginx ini** yang menjawab domain — DNS mengarah ke server/layanan lain,
+atau ada proxy/CDN (mis. Cloudflare) di depan. Perbaiki DNS/hapus proxy dulu.
 
 ## 5. Firewall
 
