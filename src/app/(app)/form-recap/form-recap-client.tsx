@@ -18,6 +18,8 @@ interface SiteRef {
 interface Cell {
   deposit: number | null;
   withdraw: number | null;
+  plBet: number | null;
+  validasi: number | null;
 }
 
 interface Result {
@@ -34,7 +36,18 @@ interface Envelope<T> {
   data: T | null;
 }
 
-type Metric = 'deposit' | 'withdraw';
+// The four views the toggle offers. `digits` is how many decimals each metric
+// renders — PL Bet is currency (2), the counts are whole numbers (0).
+const METRICS = {
+  deposit: { label: 'Form Deposit', short: 'Form DP', digits: 0 },
+  withdraw: { label: 'Form Withdraw', short: 'Form WD', digits: 0 },
+  plBet: { label: 'PL Bet', short: 'PL Bet', digits: 2 },
+  validasi: { label: 'Validasi', short: 'Validasi', digits: 0 },
+} as const satisfies Record<string, { label: string; short: string; digits: number }>;
+
+type Metric = keyof typeof METRICS;
+
+const METRIC_KEYS = Object.keys(METRICS) as Metric[];
 
 // Stable fallbacks: a fresh `[]`/`{}` each render would change the identity the
 // memo dependency arrays compare against, recomputing on every render.
@@ -71,8 +84,18 @@ const MONTHS_LONG = [
   'December',
 ];
 
-const intFormat = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 });
-const avgFormat = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
+/** A cell/total value at the metric's own precision. */
+function formatValue(value: number, digits: number): string {
+  return value.toLocaleString('id-ID', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+/** An average always shows at least one decimal, so a per-day mean is not lost. */
+function formatAvg(value: number, digits: number): string {
+  return value.toLocaleString('id-ID', { maximumFractionDigits: Math.max(digits, 1) });
+}
 
 /** `2025-12-01` → `1-Dec-2025`, matching the operator's spreadsheet. */
 function formatDayLabel(iso: string): string {
@@ -150,13 +173,15 @@ export function FormRecapClient() {
     [sites, perSite],
   );
 
+  const config = METRICS[metric];
+
   return (
     <div className="space-y-3">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Rekap Form DP &amp; WD</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Rekap Form</h1>
         <p className="text-muted-foreground text-sm">
-          Jumlah Form {metric === 'deposit' ? 'Deposit' : 'Withdraw'} per site per
-          tanggal. Sel kosong berarti belum ada laporan hari itu.
+          {config.label} per site per tanggal. Sel kosong berarti belum ada data hari
+          itu.
         </p>
       </div>
 
@@ -170,27 +195,22 @@ export function FormRecapClient() {
             aria-label="Bulan"
           />
 
-          <div className="border-border/60 bg-muted/40 inline-flex rounded-md border p-0.5">
-            <MetricButton
-              active={metric === 'deposit'}
-              onClick={() => setMetric('deposit')}
-            >
-              Form Deposit
-            </MetricButton>
-            <MetricButton
-              active={metric === 'withdraw'}
-              onClick={() => setMetric('withdraw')}
-            >
-              Form Withdraw
-            </MetricButton>
+          <div className="border-border/60 bg-muted/40 inline-flex flex-wrap rounded-md border p-0.5">
+            {METRIC_KEYS.map((key) => (
+              <MetricButton
+                key={key}
+                active={metric === key}
+                onClick={() => setMetric(key)}
+              >
+                {METRICS[key].label}
+              </MetricButton>
+            ))}
           </div>
 
           <div className="border-border/60 bg-muted/40 ml-auto flex items-baseline gap-1.5 rounded-md border px-2.5 py-1">
-            <span className="text-muted-foreground text-xs">
-              Total Form {metric === 'deposit' ? 'DP' : 'WD'}
-            </span>
+            <span className="text-muted-foreground text-xs">Total {config.short}</span>
             <span className="text-sm font-semibold tabular-nums">
-              {intFormat.format(grandTotal)}
+              {formatValue(grandTotal, config.digits)}
             </span>
           </div>
         </div>
@@ -240,9 +260,9 @@ export function FormRecapClient() {
                       return (
                         <td
                           key={site.id}
-                          className="border px-1.5 py-1 text-right tabular-nums"
+                          className="border px-1.5 py-1 text-right whitespace-nowrap tabular-nums"
                         >
-                          {value === null ? '' : intFormat.format(value)}
+                          {value === null ? '' : formatValue(value, config.digits)}
                         </td>
                       );
                     })}
@@ -261,10 +281,10 @@ export function FormRecapClient() {
                   {sites.map((site) => (
                     <td
                       key={site.id}
-                      className="sticky z-30 border bg-cyan-200 px-1.5 text-right font-semibold text-cyan-950 tabular-nums"
+                      className="sticky z-30 border bg-cyan-200 px-1.5 text-right font-semibold whitespace-nowrap text-cyan-950 tabular-nums"
                       style={{ bottom: FOOT_ROW_H, height: FOOT_ROW_H }}
                     >
-                      {intFormat.format(perSite[site.id]?.total ?? 0)}
+                      {formatValue(perSite[site.id]?.total ?? 0, config.digits)}
                     </td>
                   ))}
                 </tr>
@@ -282,10 +302,10 @@ export function FormRecapClient() {
                     return (
                       <td
                         key={site.id}
-                        className="sticky bottom-0 z-30 border bg-amber-200 px-1.5 text-right font-semibold text-amber-950 tabular-nums"
+                        className="sticky bottom-0 z-30 border bg-amber-200 px-1.5 text-right font-semibold whitespace-nowrap text-amber-950 tabular-nums"
                         style={{ height: FOOT_ROW_H }}
                       >
-                        {avgFormat.format(avg)}
+                        {formatAvg(avg, config.digits)}
                       </td>
                     );
                   })}
