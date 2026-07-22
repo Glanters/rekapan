@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, ArrowUpDown, Receipt } from 'lucide-react';
+import { Receipt } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { Card } from '@/components/ui/card';
@@ -9,19 +9,23 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
-interface Row {
-  siteId: string;
+interface SiteRef {
+  id: string;
   code: string;
   name: string;
-  formDeposit: number;
-  formWithdraw: number;
+}
+
+interface Cell {
+  deposit: number | null;
+  withdraw: number | null;
 }
 
 interface Result {
   from: string;
   to: string;
-  rows: Row[];
-  totals: { formDeposit: number; formWithdraw: number };
+  dates: string[];
+  sites: SiteRef[];
+  cells: Record<string, Cell>;
 }
 
 interface Envelope<T> {
@@ -30,13 +34,56 @@ interface Envelope<T> {
   data: T | null;
 }
 
-// Stable fallback: a fresh `[]` each render would change the identity the memo
-// dependency array compares against, recomputing the sort on every render.
-const NO_ROWS: Row[] = [];
+type Metric = 'deposit' | 'withdraw';
 
-const numberFormat = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 });
-function formatCount(value: number): string {
-  return numberFormat.format(value);
+// Stable fallbacks: a fresh `[]`/`{}` each render would change the identity the
+// memo dependency arrays compare against, recomputing on every render.
+const NO_DATES: string[] = [];
+const NO_SITES: SiteRef[] = [];
+const NO_CELLS: Record<string, Cell> = {};
+
+const MONTHS_SHORT = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+const MONTHS_LONG = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+const intFormat = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 });
+const avgFormat = new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 });
+
+/** `2025-12-01` → `1-Dec-2025`, matching the operator's spreadsheet. */
+function formatDayLabel(iso: string): string {
+  const [year, month, day] = iso.split('-').map(Number);
+  return `${day}-${MONTHS_SHORT[(month ?? 1) - 1]}-${year}`;
+}
+
+/** `2025-12` → `December 2025`, for the top-left corner. */
+function formatMonthTitle(month: string): string {
+  const [year, m] = month.split('-').map(Number);
+  return `${MONTHS_LONG[(m ?? 1) - 1]} ${year}`;
 }
 
 function currentMonth(): string {
@@ -51,22 +98,17 @@ function monthRange(month: string): { from: string; to: string } {
   return { from: `${month}-01`, to: `${month}-${String(lastDay).padStart(2, '0')}` };
 }
 
-type SortKey = 'name' | 'formDeposit' | 'formWithdraw' | 'selisih';
-
-function selisih(row: Row): number {
-  return row.formDeposit - row.formWithdraw;
+/** An evenly-spread, readable header colour per column — the spreadsheet look. */
+function headerStyle(index: number, total: number): React.CSSProperties {
+  const hue = Math.round((index * 360) / Math.max(total, 1));
+  return { backgroundColor: `hsl(${hue}, 68%, 78%)`, color: '#111' };
 }
 
-function metric(row: Row, key: Exclude<SortKey, 'name'>): number {
-  return key === 'selisih' ? selisih(row) : row[key];
-}
+const FOOT_ROW_H = 30;
 
 export function FormRecapClient() {
   const [month, setMonth] = useState(currentMonth);
-  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({
-    key: 'name',
-    dir: 'asc',
-  });
+  const [metric, setMetric] = useState<Metric>('deposit');
 
   const { from, to } = monthRange(month);
 
@@ -81,45 +123,44 @@ export function FormRecapClient() {
     },
   });
 
-  const rows = query.data?.rows ?? NO_ROWS;
-  const totals = query.data?.totals ?? { formDeposit: 0, formWithdraw: 0 };
+  const dates = query.data?.dates ?? NO_DATES;
+  const sites = query.data?.sites ?? NO_SITES;
+  const cells = query.data?.cells ?? NO_CELLS;
 
-  const sortedRows = useMemo(() => {
-    const copy = [...rows];
-    const dir = sort.dir === 'asc' ? 1 : -1;
-    copy.sort((a, b) => {
-      let cmp: number;
-      if (sort.key === 'name') {
-        cmp = a.name.localeCompare(b.name);
-      } else {
-        cmp = metric(a, sort.key) - metric(b, sort.key);
-        if (cmp === 0) cmp = a.name.localeCompare(b.name);
+  // Column total and reporting-day count per site, for the selected metric.
+  const perSite = useMemo(() => {
+    const stats: Record<string, { total: number; count: number }> = {};
+    for (const site of sites) {
+      let total = 0;
+      let count = 0;
+      for (const date of dates) {
+        const value = cells[`${site.id}|${date}`]?.[metric] ?? null;
+        if (value !== null) {
+          total += value;
+          count += 1;
+        }
       }
-      return cmp * dir;
-    });
-    return copy;
-  }, [rows, sort]);
+      stats[site.id] = { total, count };
+    }
+    return stats;
+  }, [sites, dates, cells, metric]);
 
-  // A fresh column sorts descending (most-active first); the site name ascending.
-  function toggleSort(key: SortKey) {
-    setSort((prev) =>
-      prev.key === key
-        ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
-        : { key, dir: key === 'name' ? 'asc' : 'desc' },
-    );
-  }
+  const grandTotal = useMemo(
+    () => sites.reduce((sum, site) => sum + (perSite[site.id]?.total ?? 0), 0),
+    [sites, perSite],
+  );
 
   return (
     <div className="space-y-3">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Rekap Form DP &amp; WD</h1>
         <p className="text-muted-foreground text-sm">
-          Jumlah Form Deposit dan Form Withdraw per site untuk bulan terpilih. Semua
-          site tampil di satu tabel, termasuk yang belum mengisi.
+          Jumlah Form {metric === 'deposit' ? 'Deposit' : 'Withdraw'} per site per
+          tanggal. Sel kosong berarti belum ada laporan hari itu.
         </p>
       </div>
 
-      <Card className="border-border/60 sticky top-14 z-20 p-2.5">
+      <Card className="border-border/60 sticky top-14 z-30 p-2.5">
         <div className="flex flex-wrap items-center gap-3">
           <Input
             type="month"
@@ -128,9 +169,29 @@ export function FormRecapClient() {
             className="w-auto"
             aria-label="Bulan"
           />
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <TotalChip label="Total Form DP" value={totals.formDeposit} />
-            <TotalChip label="Total Form WD" value={totals.formWithdraw} />
+
+          <div className="border-border/60 bg-muted/40 inline-flex rounded-md border p-0.5">
+            <MetricButton
+              active={metric === 'deposit'}
+              onClick={() => setMetric('deposit')}
+            >
+              Form Deposit
+            </MetricButton>
+            <MetricButton
+              active={metric === 'withdraw'}
+              onClick={() => setMetric('withdraw')}
+            >
+              Form Withdraw
+            </MetricButton>
+          </div>
+
+          <div className="border-border/60 bg-muted/40 ml-auto flex items-baseline gap-1.5 rounded-md border px-2.5 py-1">
+            <span className="text-muted-foreground text-xs">
+              Total Form {metric === 'deposit' ? 'DP' : 'WD'}
+            </span>
+            <span className="text-sm font-semibold tabular-nums">
+              {intFormat.format(grandTotal)}
+            </span>
           </div>
         </div>
       </Card>
@@ -138,87 +199,96 @@ export function FormRecapClient() {
       <Card className="border-border/60 overflow-hidden py-0">
         {query.isLoading ? (
           <div className="space-y-2 p-4">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <Skeleton key={i} className="h-9 w-full" />
+            {Array.from({ length: 10 }).map((_, i) => (
+              <Skeleton key={i} className="h-8 w-full" />
             ))}
           </div>
-        ) : rows.length === 0 ? (
+        ) : sites.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-16 text-center">
             <Receipt className="text-muted-foreground size-8" />
             <p className="font-medium">Belum ada site pada cakupan ini</p>
           </div>
         ) : (
-          <div className="relative max-h-[calc(100svh-16rem)] overflow-auto">
-            <table className="w-full border-collapse text-[13px]">
-              <thead className="sticky top-0 z-10">
-                <tr className="bg-background border-b">
-                  <SortHeader
-                    label="Site"
-                    col="name"
-                    sort={sort}
-                    onSort={toggleSort}
-                    align="left"
-                    className="sticky left-0 z-20"
-                  />
-                  <SortHeader
-                    label="Form DP"
-                    col="formDeposit"
-                    sort={sort}
-                    onSort={toggleSort}
-                    align="right"
-                  />
-                  <SortHeader
-                    label="Form WD"
-                    col="formWithdraw"
-                    sort={sort}
-                    onSort={toggleSort}
-                    align="right"
-                  />
-                  <SortHeader
-                    label="Selisih"
-                    col="selisih"
-                    sort={sort}
-                    onSort={toggleSort}
-                    align="right"
-                  />
+          <div className="relative max-h-[calc(100svh-15rem)] overflow-auto">
+            <table className="border-collapse text-[12px]">
+              <thead>
+                <tr>
+                  <th className="bg-foreground text-background sticky top-0 left-0 z-40 min-w-[92px] border px-2 py-1.5 text-left font-semibold whitespace-nowrap">
+                    {formatMonthTitle(month)}
+                  </th>
+                  {sites.map((site, index) => (
+                    <th
+                      key={site.id}
+                      title={`${site.code} — ${site.name}`}
+                      style={headerStyle(index, sites.length)}
+                      className="sticky top-0 z-30 min-w-[68px] border px-1 py-1.5 text-center text-[11px] font-bold uppercase"
+                    >
+                      {site.name}
+                    </th>
+                  ))}
                 </tr>
               </thead>
+
               <tbody>
-                {sortedRows.map((row) => (
-                  <tr
-                    key={row.siteId}
-                    className="hover:bg-muted/40 group border-b transition-colors"
-                  >
-                    <td className="bg-background group-hover:bg-muted/40 sticky left-0 z-10 px-3 py-1.5 whitespace-nowrap">
-                      <span className="font-mono text-xs">{row.code}</span>
-                      <span className="text-muted-foreground ml-2">{row.name}</span>
+                {dates.map((date) => (
+                  <tr key={date} className="hover:bg-muted/30">
+                    <td className="bg-background sticky left-0 z-20 border px-2 py-1 font-medium whitespace-nowrap tabular-nums">
+                      {formatDayLabel(date)}
                     </td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">
-                      {formatCount(row.formDeposit)}
-                    </td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">
-                      {formatCount(row.formWithdraw)}
-                    </td>
-                    <td className="text-muted-foreground px-3 py-1.5 text-right tabular-nums">
-                      {formatCount(selisih(row))}
-                    </td>
+                    {sites.map((site) => {
+                      const value = cells[`${site.id}|${date}`]?.[metric] ?? null;
+                      return (
+                        <td
+                          key={site.id}
+                          className="border px-1.5 py-1 text-right tabular-nums"
+                        >
+                          {value === null ? '' : intFormat.format(value)}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
-              <tfoot className="sticky bottom-0 z-10">
-                <tr className="bg-muted/60 border-t font-semibold">
-                  <td className="bg-muted/60 sticky left-0 z-20 px-3 py-2 whitespace-nowrap">
-                    Total ({rows.length} site)
+
+              <tfoot>
+                <tr>
+                  <td
+                    className="sticky left-0 z-40 border bg-cyan-200 px-2 text-center font-bold text-cyan-950"
+                    style={{ bottom: FOOT_ROW_H, height: FOOT_ROW_H }}
+                  >
+                    TOTAL
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums">
-                    {formatCount(totals.formDeposit)}
+                  {sites.map((site) => (
+                    <td
+                      key={site.id}
+                      className="sticky z-30 border bg-cyan-200 px-1.5 text-right font-semibold text-cyan-950 tabular-nums"
+                      style={{ bottom: FOOT_ROW_H, height: FOOT_ROW_H }}
+                    >
+                      {intFormat.format(perSite[site.id]?.total ?? 0)}
+                    </td>
+                  ))}
+                </tr>
+                <tr>
+                  <td
+                    className="sticky bottom-0 left-0 z-40 border bg-amber-200 px-2 text-center font-bold text-amber-950"
+                    style={{ height: FOOT_ROW_H }}
+                    title="Rata-rata per hari yang terisi"
+                  >
+                    RATA - RATA
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums">
-                    {formatCount(totals.formWithdraw)}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums">
-                    {formatCount(totals.formDeposit - totals.formWithdraw)}
-                  </td>
+                  {sites.map((site) => {
+                    const stat = perSite[site.id] ?? { total: 0, count: 0 };
+                    const avg = stat.count > 0 ? stat.total / stat.count : 0;
+                    return (
+                      <td
+                        key={site.id}
+                        className="sticky bottom-0 z-30 border bg-amber-200 px-1.5 text-right font-semibold text-amber-950 tabular-nums"
+                        style={{ height: FOOT_ROW_H }}
+                      >
+                        {avgFormat.format(avg)}
+                      </td>
+                    );
+                  })}
                 </tr>
               </tfoot>
             </table>
@@ -229,51 +299,27 @@ export function FormRecapClient() {
   );
 }
 
-function TotalChip({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="border-border/60 bg-muted/40 flex items-baseline gap-1.5 rounded-md border px-2.5 py-1">
-      <span className="text-muted-foreground text-xs">{label}</span>
-      <span className="text-sm font-semibold tabular-nums">{formatCount(value)}</span>
-    </div>
-  );
-}
-
-function SortHeader({
-  label,
-  col,
-  sort,
-  onSort,
-  align,
-  className,
+function MetricButton({
+  active,
+  onClick,
+  children,
 }: {
-  label: string;
-  col: SortKey;
-  sort: { key: SortKey; dir: 'asc' | 'desc' };
-  onSort: (key: SortKey) => void;
-  align: 'left' | 'right';
-  className?: string;
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
 }) {
-  const active = sort.key === col;
-  const Icon = !active ? ArrowUpDown : sort.dir === 'asc' ? ArrowUp : ArrowDown;
   return (
-    <th
+    <button
+      type="button"
+      onClick={onClick}
       className={cn(
-        'bg-background text-muted-foreground border-b px-3 py-2 font-medium',
-        align === 'right' ? 'text-right' : 'text-left',
-        className,
+        'rounded px-3 py-1 text-sm font-medium transition-colors',
+        active
+          ? 'bg-background text-foreground shadow-sm'
+          : 'text-muted-foreground hover:text-foreground',
       )}
     >
-      <button
-        type="button"
-        onClick={() => onSort(col)}
-        className={cn(
-          'hover:text-foreground inline-flex items-center gap-1 transition-colors',
-          align === 'right' && 'flex-row-reverse',
-        )}
-      >
-        {label}
-        <Icon className={cn('size-3.5', !active && 'opacity-40')} />
-      </button>
-    </th>
+      {children}
+    </button>
   );
 }

@@ -6,19 +6,19 @@ import { scopedWhere } from '../db/site-scope';
 import { ValidationError } from '../errors';
 
 /**
- * Form DP/WD recap.
+ * Form DP/WD recap — a date × site matrix.
  *
- * One row per site: how many deposit forms (`form_deposit`) and withdraw forms
- * (`form_withdraw`) that site filed across the window. Every active site in the
- * caller's scope appears, even one with nothing filed, so the recap doubles as a
- * "who hasn't reported" list rather than silently dropping the empty rows.
+ * Rows are the days of the window, columns are the sites, and each cell holds
+ * that site's Form Deposit (`form_deposit`) and Form Withdraw (`form_withdraw`)
+ * count for the day. A cell is `null` for a metric the site did not enter that
+ * day, so the client can render a blank (no report) distinctly from an entered
+ * zero — the same distinction the operator's spreadsheet makes.
  *
- * SCALE. The two per-site sums are computed by one `SUM ... GROUP BY siteId`
- * inside Postgres, mirroring the dashboard's per-site breakdown: `monthly_values`
- * is sized for millions of rows, so this never pulls values into Node to add
- * them up. That aggregate groups a value row by a field of its *parent report*
- * (`siteId`), which Prisma's `groupBy` cannot express, so it is a parameterised
- * `$queryRaw`.
+ * SCALE. One `GROUP BY siteId, reportDate` inside Postgres produces the whole
+ * matrix; the result is bounded by sites × days, never by the value rows behind
+ * it. Grouping a value row by a field of its *parent report* (`siteId`,
+ * `reportDate`) is something Prisma's `groupBy` cannot express, so this is a
+ * parameterised `$queryRaw`.
  *
  * RAW QUERIES ARE OUTSIDE THE TRIPWIRE. `scopedDb`'s guard cannot see inside a
  * `$queryRaw`, so the site constraint is written by hand from the same
@@ -32,7 +32,7 @@ const MS_PER_DAY = 86_400_000;
 const FORM_DEPOSIT_KEY = 'form_deposit';
 const FORM_WITHDRAW_KEY = 'form_withdraw';
 
-/** Widest window the recap will sum; a wider request is clamped to it. */
+/** Widest window the recap will render; a wider request is clamped to it. */
 export const FORM_RECAP_MAX_DAYS = 62;
 
 function fromIsoDate(value: string): Date {
@@ -47,30 +47,47 @@ function toIsoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-/** Postgres `numeric` arrives as text (see the dashboard); parse it once here. */
-function toNumber(value: string | number | null | undefined): number {
-  if (value === null || value === undefined) return 0;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
+function eachIsoDate(from: string, to: string): string[] {
+  const end = fromIsoDate(to).getTime();
+  const dates: string[] = [];
+  for (let t = fromIsoDate(from).getTime(); t <= end; t += MS_PER_DAY) {
+    dates.push(toIsoDate(new Date(t)));
+  }
+  return dates;
 }
 
-export interface FormRecapRow {
-  siteId: string;
+/**
+ * Postgres `numeric` arrives as text; `null` means the metric was not entered
+ * that day. Parsing keeps an entered zero as `0`, distinct from that `null`.
+ */
+function toNullableNumber(value: string | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export interface FormRecapSite {
+  id: string;
   code: string;
   name: string;
-  /** Count of deposit forms filed in the window. */
-  formDeposit: number;
-  /** Count of withdraw forms filed in the window. */
-  formWithdraw: number;
+}
+
+export interface FormRecapCell {
+  /** Deposit-form count for the day, or null when none was entered. */
+  deposit: number | null;
+  /** Withdraw-form count for the day, or null when none was entered. */
+  withdraw: number | null;
 }
 
 export interface FormRecapResult {
   from: string;
   to: string;
-  /** One row per active site in scope, ordered by name. */
-  rows: FormRecapRow[];
-  /** Grand totals across every row. */
-  totals: { formDeposit: number; formWithdraw: number };
+  /** Every date in the window, ascending — the matrix rows. */
+  dates: string[];
+  /** Sites in scope, ordered by name — the matrix columns. */
+  sites: FormRecapSite[];
+  /** Keyed `${siteId}|${date}`. A missing key means no report that day. */
+  cells: Record<string, FormRecapCell>;
 }
 
 export interface FormRecapParams {
@@ -116,20 +133,25 @@ function siteClause(siteIds: readonly string[] | null): Prisma.Sql {
 
 interface RawRow {
   siteId: string;
-  formDeposit: string;
-  formWithdraw: string;
+  date: string;
+  formDeposit: string | null;
+  formWithdraw: string | null;
 }
 
-/** Per-site form sums for the window, keyed by siteId. Absent site → no rows. */
-async function loadSums(
+/** The per-(site, date) matrix cells for the window, keyed `${siteId}|${date}`. */
+async function loadCells(
   siteIds: readonly string[] | null,
   from: string,
   to: string,
-): Promise<Map<string, { formDeposit: number; formWithdraw: number }>> {
+): Promise<Record<string, FormRecapCell>> {
+  // `[siteId, reportDate]` is unique per report and `[reportId, columnId]` per
+  // value, so each group has at most one deposit and one withdraw value; MAX
+  // returns it, or NULL (no ELSE) when the metric was not entered that day.
   const rows = await unsafeDb.$queryRaw<RawRow[]>`
     SELECT r."siteId" AS "siteId",
-           COALESCE(SUM(CASE WHEN c."key" = ${FORM_DEPOSIT_KEY}  THEN v."valueNumeric" ELSE 0 END), 0)::text AS "formDeposit",
-           COALESCE(SUM(CASE WHEN c."key" = ${FORM_WITHDRAW_KEY} THEN v."valueNumeric" ELSE 0 END), 0)::text AS "formWithdraw"
+           to_char(r."reportDate", 'YYYY-MM-DD') AS "date",
+           MAX(CASE WHEN c."key" = ${FORM_DEPOSIT_KEY}  THEN v."valueNumeric" END)::text AS "formDeposit",
+           MAX(CASE WHEN c."key" = ${FORM_WITHDRAW_KEY} THEN v."valueNumeric" END)::text AS "formWithdraw"
       FROM "monthly_values" v
       JOIN "monthly_reports" r ON r."id" = v."reportId"
       JOIN "monthly_columns" c ON c."id" = v."columnId"
@@ -139,22 +161,17 @@ async function loadSums(
        AND r."reportDate" <= ${to}::date
        AND c."key" IN (${FORM_DEPOSIT_KEY}, ${FORM_WITHDRAW_KEY})
        ${siteClause(siteIds)}
-     GROUP BY r."siteId"
+     GROUP BY r."siteId", r."reportDate"
   `;
 
-  return new Map(
-    rows.map((row) => [
-      row.siteId,
-      {
-        formDeposit: toNumber(row.formDeposit),
-        formWithdraw: toNumber(row.formWithdraw),
-      },
-    ]),
-  );
-}
-
-function emptyResult(from: string, to: string): FormRecapResult {
-  return { from, to, rows: [], totals: { formDeposit: 0, formWithdraw: 0 } };
+  const cells: Record<string, FormRecapCell> = {};
+  for (const row of rows) {
+    cells[`${row.siteId}|${row.date}`] = {
+      deposit: toNullableNumber(row.formDeposit),
+      withdraw: toNullableNumber(row.formWithdraw),
+    };
+  }
+  return cells;
 }
 
 export async function getFormRecap(
@@ -164,40 +181,22 @@ export async function getFormRecap(
   ctx.requirePermission('monthly.view');
 
   const { from, to } = resolveWindow(params);
+  const dates = eachIsoDate(from, to);
 
-  // Every active site the caller can see becomes a row, so the recap lists the
-  // sites that filed nothing too. `narrowSiteFilter(undefined)` is null for Root
+  // Every active site the caller can see becomes a column, so a site that filed
+  // nothing still appears (blank). `narrowSiteFilter(undefined)` is null for Root
   // (no filter) or the caller's own ids.
   const sites = await scopedDb(ctx).site.findMany({
     where: scopedWhere(ctx, 'Site', { deletedAt: null, status: 'ACTIVE' }),
     select: { id: true, code: true, name: true },
     orderBy: { name: 'asc' },
   });
-  if (sites.length === 0) return emptyResult(from, to);
+  if (sites.length === 0) return { from, to, dates, sites: [], cells: {} };
 
   // Guarded above (`sites` is empty when scope is empty), so `siteIds` here is
   // either null or non-empty — the raw query never sees `IN ()`.
   const siteIds = ctx.narrowSiteFilter(undefined);
-  const sums = await loadSums(siteIds, from, to);
+  const cells = await loadCells(siteIds, from, to);
 
-  const rows: FormRecapRow[] = sites.map((site) => {
-    const agg = sums.get(site.id);
-    return {
-      siteId: site.id,
-      code: site.code,
-      name: site.name,
-      formDeposit: agg?.formDeposit ?? 0,
-      formWithdraw: agg?.formWithdraw ?? 0,
-    };
-  });
-
-  const totals = rows.reduce(
-    (acc, row) => ({
-      formDeposit: acc.formDeposit + row.formDeposit,
-      formWithdraw: acc.formWithdraw + row.formWithdraw,
-    }),
-    { formDeposit: 0, formWithdraw: 0 },
-  );
-
-  return { from, to, rows, totals };
+  return { from, to, dates, sites, cells };
 }
