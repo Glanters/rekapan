@@ -58,7 +58,7 @@ import {
   TurnoverTrendChart,
   barChartHeight,
 } from './dashboard-charts';
-import { computeDelta, formatLongDate, formatRupiah } from './format';
+import { computeDelta, formatLongDate, formatNumber, formatRupiah } from './format';
 import type {
   DashboardActivity,
   DashboardData,
@@ -156,6 +156,8 @@ interface StatCardDef {
   /** Set when a rise is the unwelcome direction, so the delta colours invert. */
   invert?: boolean;
   hint?: string;
+  /** A plain count (bets, members) rather than a rupiah amount — no "Rp". */
+  count?: boolean;
 }
 
 const STAT_CARDS: readonly StatCardDef[] = [
@@ -163,8 +165,8 @@ const STAT_CARDS: readonly StatCardDef[] = [
   { key: 'withdraw', label: 'Withdraw', icon: ArrowUpFromLine, invert: true },
   { key: 'profit', label: 'Profit', icon: TrendingUp, hint: 'Deposit − withdraw' },
   { key: 'turnover', label: 'Turnover', icon: Coins },
-  { key: 'bet', label: 'Total Bet', icon: Gamepad2 },
-  { key: 'validasi', label: 'Validasi', icon: BadgeCheck },
+  { key: 'bet', label: 'Total Bet', icon: Gamepad2, count: true },
+  { key: 'validasi', label: 'Validasi', icon: BadgeCheck, count: true },
 ];
 
 function StatCard({
@@ -206,7 +208,7 @@ function StatCard({
             value < 0 && 'text-destructive',
           )}
         >
-          {formatRupiah(value)}
+          {definition.count ? formatNumber(value) : formatRupiah(value)}
         </p>
         <div className="flex items-center gap-1.5 text-xs">
           {delta ? (
