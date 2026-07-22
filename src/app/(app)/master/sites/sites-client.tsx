@@ -62,6 +62,14 @@ interface SiteRow {
   timezone: string;
   currency: string;
   status: SiteStatus;
+  templateId: string | null;
+  template: { code: string; name: string } | null;
+}
+
+interface TemplateOption {
+  id: string;
+  code: string;
+  name: string;
 }
 
 interface Envelope<T> {
@@ -120,6 +128,7 @@ const SiteFormSchema = z.object({
     .min(3, 'Mata uang minimal 3 karakter.')
     .max(8, 'Mata uang maksimal 8 karakter.'),
   status: z.enum(['ACTIVE', 'INACTIVE', 'ARCHIVED']),
+  templateId: z.string().min(1, 'Template wajib dipilih.'),
 });
 
 type SiteFormValues = z.infer<typeof SiteFormSchema>;
@@ -144,7 +153,8 @@ export function SitesClient({ canCreate, canUpdate, canDelete }: SitesClientProp
 
   const { data, isLoading } = useQuery({
     queryKey: ['master-sites'],
-    queryFn: () => callApi<{ sites: SiteRow[] }>('/api/master/sites'),
+    queryFn: () =>
+      callApi<{ sites: SiteRow[]; templates: TemplateOption[] }>('/api/master/sites'),
   });
 
   const mutate = useMutation({
@@ -169,6 +179,7 @@ export function SitesClient({ canCreate, canUpdate, canDelete }: SitesClientProp
   });
 
   const sites = data?.sites ?? [];
+  const templates = data?.templates ?? [];
 
   const term = search.trim().toLowerCase();
   const filtered = term
@@ -217,6 +228,7 @@ export function SitesClient({ canCreate, canUpdate, canDelete }: SitesClientProp
                 <TableHead>Nama</TableHead>
                 <TableHead>Zona waktu</TableHead>
                 <TableHead>Mata uang</TableHead>
+                <TableHead>Template</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="w-12" />
               </TableRow>
@@ -225,7 +237,7 @@ export function SitesClient({ canCreate, canUpdate, canDelete }: SitesClientProp
               {isLoading &&
                 Array.from({ length: 3 }).map((_, i) => (
                   <TableRow key={i}>
-                    <TableCell colSpan={6}>
+                    <TableCell colSpan={7}>
                       <Skeleton className="h-8 w-full" />
                     </TableCell>
                   </TableRow>
@@ -234,7 +246,7 @@ export function SitesClient({ canCreate, canUpdate, canDelete }: SitesClientProp
               {!isLoading && filtered.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={6}
+                    colSpan={7}
                     className="text-muted-foreground py-12 text-center"
                   >
                     <Building2 className="mx-auto mb-2 size-8 opacity-40" />
@@ -259,6 +271,15 @@ export function SitesClient({ canCreate, canUpdate, canDelete }: SitesClientProp
                     </TableCell>
                     <TableCell className="text-muted-foreground text-sm">
                       {site.currency}
+                    </TableCell>
+                    <TableCell>
+                      {site.template ? (
+                        <Badge variant="secondary" className="font-normal">
+                          {site.template.code}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Badge
@@ -330,6 +351,7 @@ export function SitesClient({ canCreate, canUpdate, canDelete }: SitesClientProp
             <SiteForm
               key={formState.mode === 'edit' ? formState.site.id : 'new'}
               state={formState}
+              templates={templates}
               busy={mutate.isPending}
               onCancel={() => setFormState(null)}
               onSubmit={(values) =>
@@ -394,11 +416,13 @@ export function SitesClient({ canCreate, canUpdate, canDelete }: SitesClientProp
 
 function SiteForm({
   state,
+  templates,
   busy,
   onCancel,
   onSubmit,
 }: {
   state: FormState;
+  templates: TemplateOption[];
   busy: boolean;
   onCancel: () => void;
   onSubmit: (values: SiteFormValues) => void;
@@ -419,11 +443,13 @@ function SiteForm({
       timezone: editing?.timezone ?? 'Asia/Jakarta',
       currency: editing?.currency ?? 'IDR',
       status: editing?.status ?? 'ACTIVE',
+      templateId: editing?.templateId ?? templates[0]?.id ?? '',
     },
   });
 
   const timezone = watch('timezone');
   const status = watch('status');
+  const templateId = watch('templateId');
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="contents" noValidate>
@@ -521,6 +547,34 @@ function SiteForm({
               ))}
             </SelectContent>
           </Select>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="template">Template Monthly</Label>
+          <Select
+            items={Object.fromEntries(templates.map((t) => [t.id, t.name]))}
+            value={templateId}
+            onValueChange={(value) =>
+              setValue('templateId', value ?? '', { shouldValidate: true })
+            }
+          >
+            <SelectTrigger id="template" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {templates.map((template) => (
+                <SelectItem key={template.id} value={template.id}>
+                  {template.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {errors.templateId && (
+            <p className="text-destructive text-sm">{errors.templateId.message}</p>
+          )}
+          <p className="text-muted-foreground text-xs">
+            Menentukan kumpulan kolom laporan Monthly untuk site ini.
+          </p>
         </div>
       </div>
 

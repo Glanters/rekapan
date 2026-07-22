@@ -142,6 +142,20 @@ export async function listTemplateColumns(
   });
 }
 
+export interface MonthlyTemplateDto {
+  id: string;
+  code: string;
+  name: string;
+}
+
+/** Every template, in display order — for the site template picker. */
+export async function listMonthlyTemplates(): Promise<MonthlyTemplateDto[]> {
+  return unsafeDb.monthlyTemplate.findMany({
+    orderBy: [{ position: 'asc' }, { name: 'asc' }],
+    select: { id: true, code: true, name: true },
+  });
+}
+
 /**
  * The template whose columns the table and form should show for a site filter.
  *

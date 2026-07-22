@@ -42,6 +42,8 @@ const SITE_SELECT = {
   timezone: true,
   currency: true,
   status: true,
+  templateId: true,
+  template: { select: { code: true, name: true } },
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -57,6 +59,8 @@ export interface CreateSiteInput {
   timezone: string;
   currency: string;
   status: SiteStatus;
+  /** The Monthly template the site's reports use; null for shared columns only. */
+  templateId?: string | null | undefined;
 }
 
 export type UpdateSiteInput = Partial<CreateSiteInput>;
@@ -179,6 +183,7 @@ export async function createSite(
         timezone: input.timezone.trim(),
         currency: input.currency.trim().toUpperCase(),
         status: input.status,
+        templateId: input.templateId ?? null,
         createdById: ctx.userId,
         updatedById: ctx.userId,
       },
@@ -241,6 +246,7 @@ async function restoreSite(
         timezone: input.timezone.trim(),
         currency: input.currency.trim().toUpperCase(),
         status: input.status,
+        templateId: input.templateId ?? null,
         deletedAt: null,
         updatedById: ctx.userId,
       },
@@ -298,6 +304,7 @@ export async function updateSite(
         ? { currency: input.currency.trim().toUpperCase() }
         : {}),
       ...(input.status !== undefined ? { status: input.status } : {}),
+      ...(input.templateId !== undefined ? { templateId: input.templateId } : {}),
       updatedById: ctx.userId,
     },
     select: SITE_SELECT,

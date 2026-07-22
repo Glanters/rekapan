@@ -34,6 +34,11 @@ export const CreateSiteSchema = z.object({
     .min(3, 'Mata uang minimal 3 karakter.')
     .max(8, 'Mata uang maksimal 8 karakter.'),
   status: z.enum(SITE_STATUSES),
+  /**
+   * The Monthly template this site's reports use. Null clears it, falling back
+   * to the shared columns; omitted leaves it unchanged on update.
+   */
+  templateId: z.uuid().nullable().optional(),
 });
 
 export const UpdateSiteSchema = CreateSiteSchema.partial();

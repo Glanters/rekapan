@@ -1,3 +1,4 @@
+import { listMonthlyTemplates } from '@/server/monthly/service';
 import { ok } from '@/server/http/envelope';
 import { route } from '@/server/http/handler';
 import { CreateSiteSchema, SITE_STATUSES } from '@/server/sites/schema';
@@ -17,15 +18,19 @@ export const GET = route({
     const params = request.nextUrl.searchParams;
     const status = params.get('status');
 
-    const sites = await listSites(access, {
-      // An unrecognised status narrows to `undefined` rather than erroring: the
-      // filter is a query string, and a stale bookmark should show everything
-      // instead of a validation failure.
-      status: SITE_STATUSES.find((value) => value === status),
-      search: params.get('search') ?? undefined,
-    });
+    const [sites, templates] = await Promise.all([
+      listSites(access, {
+        // An unrecognised status narrows to `undefined` rather than erroring: the
+        // filter is a query string, and a stale bookmark should show everything
+        // instead of a validation failure.
+        status: SITE_STATUSES.find((value) => value === status),
+        search: params.get('search') ?? undefined,
+      }),
+      // Offered alongside the sites so the picker in the form has its options.
+      listMonthlyTemplates(),
+    ]);
 
-    return ok({ sites });
+    return ok({ sites, templates });
   },
 });
 
