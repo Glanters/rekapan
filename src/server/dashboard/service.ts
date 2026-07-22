@@ -54,7 +54,8 @@ const COLUMN_KEYS = {
   withdraw: 'withdraw',
   turnover: 'turnover',
   bet: 'pl_bet',
-  validasi: 'validasi',
+  // Validasi is deliberately absent: it is not a value column but the sum of the
+  // per-bank member breakdown (`monthly_validations`) — see loadTotals.
 } as const;
 
 type TotalKey = keyof typeof COLUMN_KEYS;
@@ -82,6 +83,7 @@ export interface DashboardTotals {
   profit: number;
   turnover: number;
   bet: number;
+  /** Member-registration count, summed from the per-bank breakdown. */
   validasi: number;
 }
 
@@ -298,20 +300,39 @@ async function loadTotals(
   range: DashboardRange,
 ): Promise<DashboardTotals> {
   const columnIds = [...columnIdByKey.values()];
-  if (columnIds.length === 0) return emptyTotals();
 
-  const grouped = await scopedDb(ctx).monthlyValue.groupBy({
-    by: ['columnId'],
-    where: scopedWhere(ctx, 'MonthlyValue', {
-      columnId: { in: columnIds },
-      report: {
-        deletedAt: null,
-        reportDate: { gte: fromIsoDate(range.from), lte: fromIsoDate(range.to) },
-        ...(siteIds ? { siteId: { in: [...siteIds] } } : {}),
-      },
+  // Shared by both queries. The site constraint on the value groupBy still rides
+  // through `scopedWhere` (the tripwire verifies it); the validation aggregate
+  // applies the same filter by hand — see below.
+  const reportInRange = {
+    deletedAt: null,
+    reportDate: { gte: fromIsoDate(range.from), lte: fromIsoDate(range.to) },
+    ...(siteIds ? { siteId: { in: [...siteIds] } } : {}),
+  };
+
+  const [grouped, validation] = await Promise.all([
+    scopedDb(ctx).monthlyValue.groupBy({
+      by: ['columnId'],
+      where: scopedWhere(ctx, 'MonthlyValue', {
+        columnId: { in: columnIds },
+        report: reportInRange,
+      }),
+      _sum: { valueNumeric: true },
     }),
-    _sum: { valueNumeric: true },
-  });
+    // Validasi is the member-registration count, and it lives in the per-bank
+    // breakdown, not in a value column: the Validasi column is computed on read
+    // (VALIDATION_TOTAL) and never written to `monthly_values`, so summing that
+    // column would always miss it. Sum the breakdown itself.
+    //
+    // `unsafeDb` with a hand-written site filter, matching this module's raw
+    // aggregates — MonthlyValidation is reached only through its parent report,
+    // so the scope constraint rides on the `report` relation, and `getDashboard`
+    // has already returned early when the caller's site set is empty.
+    unsafeDb.monthlyValidation.aggregate({
+      _sum: { memberCount: true },
+      where: { report: reportInRange },
+    }),
+  ]);
 
   const sumByColumnId = new Map(
     grouped.map((row) => [row.columnId, toNumber(row._sum.valueNumeric)]),
@@ -327,6 +348,7 @@ async function loadTotals(
   // hand-entered and may disagree with the arithmetic. Deriving it keeps the
   // card consistent with the two cards beside it.
   totals.profit = totals.deposit - totals.withdraw;
+  totals.validasi = toNumber(validation._sum.memberCount);
   return totals;
 }
 
