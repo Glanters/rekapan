@@ -46,6 +46,10 @@ const COLUMN_SELECT = {
   isSystem: true,
   includeInTotals: true,
   resultEffect: true,
+  templateId: true,
+  // The template's identity, so the list can show which one the column belongs
+  // to; null template means the column is shared across every template.
+  template: { select: { code: true, name: true } },
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -70,6 +74,8 @@ export interface CreateColumnInput {
   isVisible: boolean;
   includeInTotals: boolean;
   resultEffect: ResultEffect;
+  /** null (or omitted) = shared across every template; a uuid scopes to one. */
+  templateId?: string | null | undefined;
 }
 
 /**
@@ -143,6 +149,26 @@ async function assertKeyAvailable(
       ? `Key "${key}" masih dipakai oleh kolom yang sudah dihapus.`
       : `Key "${key}" sudah digunakan oleh kolom lain.`,
   );
+}
+
+/**
+ * A supplied template must exist. The picker only offers real ones, so this
+ * guards a hand-crafted request: without it a bad id trips the foreign key as a
+ * raw database error instead of a message the administrator can act on. `null`
+ * (shared) and `undefined` (unchanged) need no check.
+ */
+async function assertTemplateExists(
+  templateId: string | null | undefined,
+): Promise<void> {
+  if (!templateId) return;
+
+  const template = await unsafeDb.monthlyTemplate.findUnique({
+    where: { id: templateId },
+    select: { id: true },
+  });
+  if (!template) {
+    throw new NotFoundError('Template Monthly tidak ditemukan.');
+  }
 }
 
 async function nextPosition(): Promise<number> {
@@ -223,6 +249,7 @@ export async function createColumn(
   }
 
   await assertSingleResultColumn(input.resultEffect, holder?.id ?? null);
+  await assertTemplateExists(input.templateId);
 
   const data = {
     key,
@@ -235,6 +262,8 @@ export async function createColumn(
     isVisible: input.isVisible,
     includeInTotals: input.includeInTotals,
     resultEffect: input.resultEffect,
+    // null = shared across every template; a template id scopes the column.
+    templateId: input.templateId ?? null,
     updatedById: ctx.userId,
   };
 
@@ -317,6 +346,10 @@ export async function updateColumn(
     await assertSingleResultColumn(input.resultEffect, id);
   }
 
+  if (input.templateId !== undefined) {
+    await assertTemplateExists(input.templateId);
+  }
+
   // A result is a sum, so it has to be a number. Allowing TEXT or BOOLEAN here
   // would produce a column the calculation writes a number into and the
   // formatter renders as something else.
@@ -359,6 +392,7 @@ export async function updateColumn(
         ? { includeInTotals: input.includeInTotals }
         : {}),
       ...(input.resultEffect !== undefined ? { resultEffect: input.resultEffect } : {}),
+      ...(input.templateId !== undefined ? { templateId: input.templateId } : {}),
       updatedById: ctx.userId,
     },
     select: COLUMN_SELECT,

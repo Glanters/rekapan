@@ -2,6 +2,7 @@ import { CreateColumnSchema } from '@/server/columns/schema';
 import { createColumn, listColumns } from '@/server/columns/service';
 import { ok } from '@/server/http/envelope';
 import { route } from '@/server/http/handler';
+import { listMonthlyTemplates } from '@/server/monthly/service';
 
 /**
  * Monthly column definitions.
@@ -17,14 +18,19 @@ export const GET = route({
   handler: async ({ access, request }) => {
     const params = request.nextUrl.searchParams;
 
-    const columns = await listColumns(access, {
-      search: params.get('search') ?? undefined,
-      // The master-data screen manages hidden columns too; the Monthly grid,
-      // which only renders what operators fill in, does not ask for them.
-      includeHidden: params.get('includeHidden') === 'true',
-    });
+    const [columns, templates] = await Promise.all([
+      listColumns(access, {
+        search: params.get('search') ?? undefined,
+        // The master-data screen manages hidden columns too; the Monthly grid,
+        // which only renders what operators fill in, does not ask for them.
+        includeHidden: params.get('includeHidden') === 'true',
+      }),
+      // The template list feeds the create/edit picker, so a column can be
+      // assigned to the PNG or IDN template (or left shared).
+      listMonthlyTemplates(),
+    ]);
 
-    return ok({ columns });
+    return ok({ columns, templates });
   },
 });
 

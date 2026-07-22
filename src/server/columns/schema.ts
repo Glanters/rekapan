@@ -42,6 +42,11 @@ export const CreateColumnSchema = z.object({
     .min(1, 'Label wajib diisi.')
     .max(128, 'Label maksimal 128 karakter.'),
   group: z.string().max(64, 'Grup maksimal 64 karakter.').nullable(),
+  // Which template the column belongs to. `null` (the default) keeps it shared
+  // across every template; a template id scopes it to PNG or IDN alone. Keys
+  // stay globally unique regardless, so aggregations that read by key are
+  // unaffected by the choice.
+  templateId: z.uuid('Template tidak valid.').nullable().optional(),
   dataType: z.enum(COLUMN_DATA_TYPES),
   position: z
     .number()

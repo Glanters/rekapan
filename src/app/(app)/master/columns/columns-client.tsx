@@ -86,7 +86,19 @@ interface ColumnRow {
   isSystem: boolean;
   includeInTotals: boolean;
   resultEffect: ResultEffectValue;
+  templateId: string | null;
+  template: { code: string; name: string } | null;
 }
+
+interface TemplateOption {
+  id: string;
+  code: string;
+  name: string;
+}
+
+// The Select needs a concrete value, so the shared (null-template) choice rides
+// a sentinel; the submit handler maps it back to null.
+const SHARED_TEMPLATE = '__shared__';
 
 interface Envelope<T> {
   success: boolean;
@@ -173,6 +185,8 @@ const ColumnFormSchema = z.object({
   isVisible: z.boolean(),
   includeInTotals: z.boolean(),
   resultEffect: z.enum(RESULT_EFFECTS),
+  // The shared sentinel or a template id; never empty.
+  templateId: z.string().min(1),
 });
 
 type ColumnFormValues = z.infer<typeof ColumnFormSchema>;
@@ -200,7 +214,9 @@ export function ColumnsClient({ canCreate, canUpdate, canDelete }: ColumnsClient
     // Hidden columns are part of what this screen manages, so it asks for them
     // explicitly — unlike the Monthly grid, which renders only visible ones.
     queryFn: () =>
-      callApi<{ columns: ColumnRow[] }>('/api/master/columns?includeHidden=true'),
+      callApi<{ columns: ColumnRow[]; templates: TemplateOption[] }>(
+        '/api/master/columns?includeHidden=true',
+      ),
   });
 
   const mutate = useMutation({
@@ -225,6 +241,7 @@ export function ColumnsClient({ canCreate, canUpdate, canDelete }: ColumnsClient
   });
 
   const columns = data?.columns ?? [];
+  const templates = data?.templates ?? [];
 
   const term = search.trim().toLowerCase();
   const filtered = term
@@ -288,6 +305,7 @@ export function ColumnsClient({ canCreate, canUpdate, canDelete }: ColumnsClient
                 <TableHead>Key</TableHead>
                 <TableHead>Label</TableHead>
                 <TableHead>Grup</TableHead>
+                <TableHead>Template</TableHead>
                 <TableHead>Tipe</TableHead>
                 <TableHead>Sifat</TableHead>
                 <TableHead className="w-12" />
@@ -297,7 +315,7 @@ export function ColumnsClient({ canCreate, canUpdate, canDelete }: ColumnsClient
               {isLoading &&
                 Array.from({ length: 3 }).map((_, i) => (
                   <TableRow key={i}>
-                    <TableCell colSpan={7}>
+                    <TableCell colSpan={8}>
                       <Skeleton className="h-8 w-full" />
                     </TableCell>
                   </TableRow>
@@ -306,7 +324,7 @@ export function ColumnsClient({ canCreate, canUpdate, canDelete }: ColumnsClient
               {!isLoading && filtered.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={7}
+                    colSpan={8}
                     className="text-muted-foreground py-12 text-center"
                   >
                     <Columns3 className="mx-auto mb-2 size-8 opacity-40" />
@@ -339,6 +357,15 @@ export function ColumnsClient({ canCreate, canUpdate, canDelete }: ColumnsClient
                   <TableCell className="font-medium">{column.label}</TableCell>
                   <TableCell className="text-muted-foreground text-sm">
                     {column.group ?? '—'}
+                  </TableCell>
+                  <TableCell>
+                    {column.template ? (
+                      <Badge variant="outline" className="font-normal">
+                        {column.template.code}
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground text-sm">Semua</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-sm">
                     {DATA_TYPE_ITEMS[column.dataType] ?? column.dataType}
@@ -477,6 +504,7 @@ export function ColumnsClient({ canCreate, canUpdate, canDelete }: ColumnsClient
             <ColumnForm
               key={formState.mode === 'edit' ? formState.column.id : 'new'}
               state={formState}
+              templates={templates}
               busy={mutate.isPending}
               onCancel={() => setFormState(null)}
               onSubmit={(values) =>
@@ -551,15 +579,18 @@ interface ColumnPayload {
   isVisible: boolean;
   includeInTotals: boolean;
   resultEffect: ResultEffectValue;
+  templateId: string | null;
 }
 
 function ColumnForm({
   state,
+  templates,
   busy,
   onCancel,
   onSubmit,
 }: {
   state: FormState;
+  templates: TemplateOption[];
   busy: boolean;
   onCancel: () => void;
   onSubmit: (values: ColumnPayload) => void;
@@ -589,6 +620,8 @@ function ColumnForm({
       isVisible: editing?.isVisible ?? true,
       includeInTotals: editing?.includeInTotals ?? true,
       resultEffect: editing?.resultEffect ?? 'NEUTRAL',
+      // New columns default to shared; editing keeps the column's own template.
+      templateId: editing?.templateId ?? SHARED_TEMPLATE,
     },
   });
 
@@ -598,11 +631,17 @@ function ColumnForm({
   const isVisible = watch('isVisible');
   const includeInTotals = watch('includeInTotals');
   const resultEffect = watch('resultEffect');
+  const templateId = watch('templateId');
 
   // Precision only means something for the numeric types; showing it for TEXT
   // or DATE would offer a setting that changes nothing.
   const showsPrecision =
     dataType === 'CURRENCY' || dataType === 'DECIMAL' || dataType === 'PERCENT';
+
+  const templateItems: Record<string, string> = {
+    [SHARED_TEMPLATE]: 'Semua template (bersama)',
+    ...Object.fromEntries(templates.map((template) => [template.id, template.name])),
+  };
 
   return (
     <form
@@ -621,6 +660,7 @@ function ColumnForm({
           isVisible: values.isVisible,
           includeInTotals: values.includeInTotals,
           resultEffect: values.resultEffect,
+          templateId: values.templateId === SHARED_TEMPLATE ? null : values.templateId,
         }),
       )}
       className="contents"
@@ -690,6 +730,36 @@ function ColumnForm({
           {errors.label && (
             <p className="text-destructive text-sm">{errors.label.message}</p>
           )}
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="templateId">Template Monthly</Label>
+          <Select
+            items={templateItems}
+            value={templateId}
+            onValueChange={(value) =>
+              setValue('templateId', value ?? SHARED_TEMPLATE, {
+                shouldValidate: true,
+              })
+            }
+          >
+            <SelectTrigger id="templateId" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={SHARED_TEMPLATE}>Semua template (bersama)</SelectItem>
+              {templates.map((template) => (
+                <SelectItem key={template.id} value={template.id}>
+                  {template.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-muted-foreground text-xs leading-relaxed">
+            {templateId === SHARED_TEMPLATE
+              ? 'Kolom tampil di semua template (PNG dan IDN).'
+              : 'Kolom hanya tampil pada template yang dipilih.'}
+          </p>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
