@@ -13,6 +13,7 @@ import {
   Settings,
   ShieldCheck,
   Table2,
+  TrendingUpDown,
   Users,
 } from 'lucide-react';
 
@@ -57,6 +58,12 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: CalendarCheck,
         permission: 'dashboard.view',
         matchPrefix: true,
+      },
+      {
+        label: 'Naik Turun Site',
+        href: '/site-trend',
+        icon: TrendingUpDown,
+        permission: 'dashboard.view',
       },
     ],
   },

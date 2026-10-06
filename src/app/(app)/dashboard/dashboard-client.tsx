@@ -59,6 +59,7 @@ import {
   barChartHeight,
 } from './dashboard-charts';
 import { computeDelta, formatLongDate, formatNumber, formatRupiah } from './format';
+import { SiteTrendCard } from './site-trend-card';
 import type {
   DashboardActivity,
   DashboardData,
@@ -567,6 +568,8 @@ export function DashboardClient({
               />
             ))}
       </div>
+
+      {!hasNoSites && <SiteTrendCard />}
 
       {!isLoading && data && !hasAnyData && !hasNoSites ? (
         <Card className="border-dashed ring-0">
