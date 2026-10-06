@@ -73,7 +73,9 @@ export function TransferToolbar({
 
   return (
     <>
-      <div className="flex items-center gap-2">
+      {/* `contents`: the buttons join the parent row and wrap with its other
+          actions, rather than wrapping as one block onto a line of their own. */}
+      <div className="contents">
         {canImport && (
           <Button
             variant="outline"

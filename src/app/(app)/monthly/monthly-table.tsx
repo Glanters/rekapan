@@ -13,17 +13,16 @@ import {
   ChevronRight,
   Columns3,
   Loader2,
-  Pencil,
   Plus,
   Table2,
-  Trash2,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { TableImageButton } from '@/components/data-transfer/table-image-button';
 import { TransferToolbar } from '@/components/data-transfer/transfer-toolbar';
-import { RecordInfoPopover } from '@/components/record-info-popover';
+import { EditStamp } from '@/components/edit-stamp';
+import { RowActions } from '@/components/row-actions';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -44,6 +43,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
@@ -110,6 +116,12 @@ function formatCell(value: CellValue, column: MonthlyColumnDto): string {
       });
   }
 }
+
+/** Column id of the "who changed this row" stamp. */
+const AUDIT_COLUMN = 'audit';
+
+// The Select needs a concrete value; this one stands for no site filter.
+const ALL_SITES = '__all__';
 
 const NUMERIC_TYPES = new Set(['CURRENCY', 'DECIMAL', 'INTEGER', 'PERCENT']);
 
@@ -210,6 +222,15 @@ export function MonthlyTable({
         accessorFn: (row) => row.siteCode,
         size: 64,
       },
+      // Third, not last: with two dozen figure columns a trailing column is
+      // off-screen, and who last changed a row is what someone checking a
+      // figure needs to see first.
+      {
+        id: AUDIT_COLUMN,
+        header: 'Diubah',
+        accessorFn: (row) => row.updatedAt,
+        size: 150,
+      },
     ];
 
     // A minimum rather than a fixed width: cells are nowrap, so a long label or
@@ -243,15 +264,30 @@ export function MonthlyTable({
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
+      {/* On a phone the primary action sits beside the title and the file
+          actions wrap onto their own row below; from lg they share one line.
+          A single unwrapping row here was wider than the screen and dragged
+          the whole page sideways. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+        <div className="min-w-0 flex-1">
           <h1 className="text-xl font-semibold tracking-tight">Monthly</h1>
           <p className="text-muted-foreground text-sm">
             {totalRows.toLocaleString('id-ID')} laporan · {dynamicColumns.length} kolom
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        {canEdit && (
+          <Button
+            className="lg:order-last"
+            onClick={() => setCreating(true)}
+            disabled={sites.length === 0}
+          >
+            <Plus className="size-4" />
+            Tambah laporan
+          </Button>
+        )}
+
+        <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto">
           <TableImageButton
             targetRef={scrollRef}
             filename={`monthly_${from}_${to}.png`}
@@ -267,19 +303,12 @@ export function MonthlyTable({
               void queryClient.invalidateQueries({ queryKey: ['monthly'] })
             }
           />
-
-          {canEdit && (
-            <Button onClick={() => setCreating(true)} disabled={sites.length === 0}>
-              <Plus className="size-4" />
-              Tambah laporan
-            </Button>
-          )}
         </div>
       </div>
 
       {/* Sticky toolbar: filters stay reachable while a wide table is scrolled. */}
-      <Card className="border-border/60 sticky top-14 z-20 p-2.5">
-        <div className="flex flex-wrap items-center gap-2">
+      <Card className="border-border/60 z-20 p-2.5 md:sticky md:top-14">
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
           <Input
             type="date"
             value={from}
@@ -287,10 +316,10 @@ export function MonthlyTable({
               setFrom(e.target.value);
               setPage(1);
             }}
-            className="w-auto"
+            className="w-full sm:w-auto"
             aria-label="Dari tanggal"
           />
-          <span className="text-muted-foreground text-sm">—</span>
+          <span className="text-muted-foreground hidden text-sm sm:inline">—</span>
           <Input
             type="date"
             value={to}
@@ -298,30 +327,41 @@ export function MonthlyTable({
               setTo(e.target.value);
               setPage(1);
             }}
-            className="w-auto"
+            className="w-full sm:w-auto"
             aria-label="Sampai tanggal"
           />
 
-          <select
-            value={siteId}
-            onChange={(e) => {
-              setSiteId(e.target.value);
+          {/* The app Select, not a native <select>: native option lists
+              ignore the dark theme and render white on white. */}
+          <Select
+            items={{
+              [ALL_SITES]: 'Semua site',
+              ...Object.fromEntries(sites.map((site) => [site.id, site.name])),
+            }}
+            value={siteId || ALL_SITES}
+            onValueChange={(value) => {
+              setSiteId(!value || value === ALL_SITES ? '' : value);
               setPage(1);
             }}
-            className="border-input bg-background h-9 rounded-md border px-3 text-sm"
-            aria-label="Site"
           >
-            <option value="">Semua site</option>
-            {sites.map((site) => (
-              <option key={site.id} value={site.id}>
-                {site.name}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger aria-label="Site" className="w-full sm:w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_SITES}>Semua site</SelectItem>
+              {sites.map((site) => (
+                <SelectItem key={site.id} value={site.id}>
+                  {site.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
-          <div className="ml-auto">
+          <div className="flex justify-end sm:ml-auto">
             <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="outline" size="sm" />}>
+              <DropdownMenuTrigger
+                render={<Button variant="outline" className="w-full sm:w-auto" />}
+              >
                 <Columns3 className="size-4" />
                 Kolom
               </DropdownMenuTrigger>
@@ -384,6 +424,10 @@ export function MonthlyTable({
                       <th
                         key={header.id}
                         style={{ width: header.getSize() }}
+                        // Audit detail is for the screen, not the shared image.
+                        data-capture-exclude={
+                          header.column.id === AUDIT_COLUMN ? true : undefined
+                        }
                         className={cn(
                           'text-muted-foreground bg-background px-2.5 py-2 text-left font-medium whitespace-nowrap',
                           index === 0 && 'sticky left-0 z-20 border-r',
@@ -402,7 +446,7 @@ export function MonthlyTable({
                         to find out a row can be edited at all. */}
                     <th
                       data-capture-exclude
-                      className="bg-background text-muted-foreground sticky right-0 z-20 w-28 border-l px-2.5 py-2 text-right font-medium"
+                      className="bg-background text-muted-foreground sticky right-0 z-20 w-12 border-l px-2.5 py-2 text-right font-medium sm:w-24"
                     >
                       Aksi
                     </th>
@@ -426,14 +470,26 @@ export function MonthlyTable({
                       return (
                         <td
                           key={cell.id}
+                          data-capture-exclude={
+                            cell.column.id === AUDIT_COLUMN ? true : undefined
+                          }
                           className={cn(
                             'px-2.5 py-1.5 whitespace-nowrap',
                             isNumeric && 'text-right tabular-nums',
                             index === 0 &&
-                              'bg-background group-hover:bg-muted/40 sticky left-0 z-10 border-r font-medium',
+                              'bg-background group-hover:bg-muted-row sticky left-0 z-10 border-r font-medium',
                           )}
                         >
-                          {index === 0 || cell.column.id === 'site' ? (
+                          {cell.column.id === AUDIT_COLUMN ? (
+                            <EditStamp
+                              label={row.original.reportDate}
+                              createdAt={row.original.createdAt}
+                              updatedAt={row.original.updatedAt}
+                              createdBy={row.original.createdBy}
+                              updatedBy={row.original.updatedBy}
+                              historyUrl={`/api/monthly/${row.original.id}/history`}
+                            />
+                          ) : index === 0 || cell.column.id === 'site' ? (
                             cell.column.id === 'site' ? (
                               <Badge variant="secondary" className="font-normal">
                                 {String(cell.getValue())}
@@ -452,43 +508,20 @@ export function MonthlyTable({
 
                     <td
                       data-capture-exclude
-                      className="bg-background group-hover:bg-muted/40 sticky right-0 z-10 border-l px-2"
+                      className="bg-background group-hover:bg-muted-row sticky right-0 z-10 border-l px-1 sm:px-2"
                     >
                       {/* Always visible, not revealed on hover: a hover-only
                           control does not exist at all on a touch device, and
                           even with a mouse it hides that the row is actionable
                           until you happen to pass over it. Excluded from the
                           image capture. */}
-                      <div className="flex items-center justify-end gap-0.5">
-                        {canEdit && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label={`Ubah laporan ${row.original.reportDate}`}
-                            onClick={() => setEditing(row.original)}
-                          >
-                            <Pencil className="size-4" />
-                          </Button>
-                        )}
-                        {canDelete && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label={`Hapus laporan ${row.original.reportDate}`}
-                            className="text-muted-foreground hover:text-destructive"
-                            onClick={() => setPendingDelete(row.original)}
-                          >
-                            <Trash2 className="size-4" />
-                          </Button>
-                        )}
-                        <RecordInfoPopover
-                          createdAt={row.original.createdAt}
-                          updatedAt={row.original.updatedAt}
-                          createdBy={row.original.createdBy}
-                          updatedBy={row.original.updatedBy}
-                          label={row.original.reportDate}
-                        />
-                      </div>
+                      <RowActions
+                        label={row.original.reportDate}
+                        canEdit={canEdit}
+                        canDelete={canDelete}
+                        onEdit={() => setEditing(row.original)}
+                        onDelete={() => setPendingDelete(row.original)}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -497,7 +530,7 @@ export function MonthlyTable({
               {/* Totals are computed server-side over the page, so the footer
                   agrees with the rows above it rather than re-deriving them
                   from values already rounded for display. */}
-              <tfoot className="bg-muted/50 sticky bottom-0">
+              <tfoot className="bg-muted-soft sticky bottom-0">
                 <tr className="border-t-2">
                   {table.getVisibleLeafColumns().map((column, index) => {
                     const meta = column.columnDef.meta as
@@ -508,9 +541,12 @@ export function MonthlyTable({
                     return (
                       <td
                         key={column.id}
+                        data-capture-exclude={
+                          column.id === AUDIT_COLUMN ? true : undefined
+                        }
                         className={cn(
                           'px-2.5 py-2 font-medium whitespace-nowrap',
-                          index === 0 && 'bg-muted/50 sticky left-0 z-10 border-r',
+                          index === 0 && 'bg-muted-soft sticky left-0 z-10 border-r',
                           total !== undefined && 'text-right tabular-nums',
                         )}
                       >
@@ -524,7 +560,7 @@ export function MonthlyTable({
                   })}
                   <td
                     data-capture-exclude
-                    className="bg-muted/50 sticky right-0 z-10 border-l"
+                    className="bg-muted-soft sticky right-0 z-10 border-l"
                   />
                 </tr>
               </tfoot>
@@ -575,6 +611,7 @@ export function MonthlyTable({
           setCreating(false);
           setEditing(null);
           void queryClient.invalidateQueries({ queryKey: ['monthly'] });
+          void queryClient.invalidateQueries({ queryKey: ['row-history'] });
         }}
       />
 

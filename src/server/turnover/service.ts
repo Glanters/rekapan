@@ -8,6 +8,8 @@ import { scopedWhere } from '../db/site-scope';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { resolveUserNames } from '../users/service';
 
+import { recordTurnoverWrite } from './history';
+
 /**
  * Turnover reporting.
  *
@@ -406,7 +408,19 @@ export async function commitTurnoverUpsert(
   tx: Prisma.TransactionClient,
   ctx: AccessContext,
   plan: TurnoverWritePlan,
-): Promise<{ id: string; created: boolean }> {
+): Promise<TurnoverCommitResult> {
+  // Read before writing, inside the same transaction, so the audit trail can
+  // record what each changed amount held before this save overwrote it.
+  const previous = plan.existingId
+    ? await tx.turnoverValue.findMany({
+        where: {
+          reportId: plan.existingId,
+          gameId: { in: plan.values.map((value) => value.gameId) },
+        },
+        select: { gameId: true, amount: true },
+      })
+    : [];
+
   const report = plan.existingId
     ? await tx.turnoverReport.update({
         where: { id: plan.existingId },
@@ -431,7 +445,24 @@ export async function commitTurnoverUpsert(
     });
   }
 
-  return { id: report.id, created: plan.existingId === null };
+  const beforeByGame = new Map(previous.map((row) => [row.gameId, Number(row.amount)]));
+  const changes = plan.values
+    .map((value) => ({
+      gameId: value.gameId,
+      before: beforeByGame.get(value.gameId) ?? null,
+      after: value.amount,
+    }))
+    .filter((change) => change.before !== change.after);
+
+  return { id: report.id, created: plan.existingId === null, changes };
+}
+
+/** What one commit wrote, game by game, for the audit trail. */
+export interface TurnoverCommitResult {
+  id: string;
+  created: boolean;
+  /** Only the amounts that actually changed. */
+  changes: { gameId: string; before: number | null; after: number }[];
 }
 
 export async function upsertTurnover(ctx: AccessContext, input: UpsertTurnoverInput) {
@@ -446,15 +477,12 @@ export async function upsertTurnover(ctx: AccessContext, input: UpsertTurnoverIn
     commitTurnoverUpsert(tx, ctx, plan),
   );
 
-  await recordAudit({
-    action: result.created ? 'turnover.created' : 'turnover.updated',
-    module: 'Turnover',
-    actorId: ctx.userId,
-    actorEmail: ctx.email,
+  await recordTurnoverWrite(ctx, {
     siteId: input.siteId,
-    entityType: 'TurnoverReport',
-    entityId: result.id,
-    after: { reportDate: input.reportDate, values: input.values },
+    reportDate: input.reportDate,
+    result,
+    context,
+    source: 'form',
   });
 
   return { id: result.id };
@@ -487,6 +515,9 @@ export async function deleteTurnover(ctx: AccessContext, reportId: string) {
     entityType: 'TurnoverReport',
     entityId: reportId,
     before: { reportDate: toIsoDate(report.reportDate) },
+    ip: ctx.ip,
+    userAgent: ctx.userAgent,
+    requestId: ctx.requestId,
   });
 
   return { id: reportId };

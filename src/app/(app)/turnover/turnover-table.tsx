@@ -1,21 +1,14 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  ChevronLeft,
-  ChevronRight,
-  ClipboardList,
-  Loader2,
-  Pencil,
-  Plus,
-  Trash2,
-} from 'lucide-react';
+import { ChevronLeft, ChevronRight, ClipboardList, Loader2, Plus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { TableImageButton } from '@/components/data-transfer/table-image-button';
 import { TransferToolbar } from '@/components/data-transfer/transfer-toolbar';
-import { RecordInfoPopover } from '@/components/record-info-popover';
+import { EditStamp } from '@/components/edit-stamp';
+import { RowActions } from '@/components/row-actions';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -28,6 +21,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 
 import { TurnoverEditDialog } from './turnover-edit-dialog';
@@ -55,6 +55,9 @@ interface TurnoverTableProps {
   canImport: boolean;
   canExport: boolean;
 }
+
+// The Select needs a concrete value; this one stands for no site filter.
+const ALL_SITES = '__all__';
 
 const NO_GAMES: TurnoverGameDto[] = [];
 const NO_ROWS: TurnoverRowDto[] = [];
@@ -158,8 +161,12 @@ export function TurnoverTable({
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
+      {/* On a phone the primary action sits beside the title and the file
+          actions wrap onto their own row below; from lg they share one line.
+          A single unwrapping row here was wider than the screen and dragged
+          the whole page sideways. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+        <div className="min-w-0 flex-1">
           <h1 className="text-xl font-semibold tracking-tight">Turnover</h1>
           <p className="text-muted-foreground text-sm">
             {totalRows.toLocaleString('id-ID')} laporan · {games.length} game
@@ -167,7 +174,18 @@ export function TurnoverTable({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        {canEdit && (
+          <Button
+            className="lg:order-last"
+            onClick={() => setCreating(true)}
+            disabled={sites.length === 0}
+          >
+            <Plus className="size-4" />
+            Tambah laporan
+          </Button>
+        )}
+
+        <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto">
           <TableImageButton
             targetRef={scrollRef}
             filename={`turnover_${from}_${to}.png`}
@@ -183,18 +201,11 @@ export function TurnoverTable({
               void queryClient.invalidateQueries({ queryKey: ['turnover'] })
             }
           />
-
-          {canEdit && (
-            <Button onClick={() => setCreating(true)} disabled={sites.length === 0}>
-              <Plus className="size-4" />
-              Tambah laporan
-            </Button>
-          )}
         </div>
       </div>
 
-      <Card className="border-border/60 sticky top-14 z-20 p-2.5">
-        <div className="flex flex-wrap items-center gap-2">
+      <Card className="border-border/60 z-20 p-2.5 md:sticky md:top-14">
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
           <Input
             type="date"
             value={from}
@@ -202,10 +213,10 @@ export function TurnoverTable({
               setFrom(e.target.value);
               setPage(1);
             }}
-            className="w-auto"
+            className="w-full sm:w-auto"
             aria-label="Dari tanggal"
           />
-          <span className="text-muted-foreground text-sm">—</span>
+          <span className="text-muted-foreground hidden text-sm sm:inline">—</span>
           <Input
             type="date"
             value={to}
@@ -213,25 +224,34 @@ export function TurnoverTable({
               setTo(e.target.value);
               setPage(1);
             }}
-            className="w-auto"
+            className="w-full sm:w-auto"
             aria-label="Sampai tanggal"
           />
-          <select
-            value={siteId}
-            onChange={(e) => {
-              setSiteId(e.target.value);
+          {/* The app Select, not a native <select>: native option lists
+              ignore the dark theme and render white on white. */}
+          <Select
+            items={{
+              [ALL_SITES]: 'Semua site',
+              ...Object.fromEntries(sites.map((site) => [site.id, site.name])),
+            }}
+            value={siteId || ALL_SITES}
+            onValueChange={(value) => {
+              setSiteId(!value || value === ALL_SITES ? '' : value);
               setPage(1);
             }}
-            className="border-input bg-background h-9 rounded-md border px-3 text-sm"
-            aria-label="Site"
           >
-            <option value="">Semua site</option>
-            {sites.map((site) => (
-              <option key={site.id} value={site.id}>
-                {site.name}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger aria-label="Site" className="w-full sm:w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_SITES}>Semua site</SelectItem>
+              {sites.map((site) => (
+                <SelectItem key={site.id} value={site.id}>
+                  {site.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           {grandTotal > 0 && (
             <div className="ml-auto text-sm">
@@ -270,7 +290,7 @@ export function TurnoverTable({
                   <tr className="bg-muted/60 border-b">
                     <th
                       rowSpan={2}
-                      className="bg-muted/60 text-muted-foreground sticky left-0 z-20 border-r px-3 py-2 text-left font-medium whitespace-nowrap"
+                      className="bg-muted-soft text-muted-foreground sticky left-0 z-20 border-r px-3 py-2 text-left font-medium whitespace-nowrap"
                     >
                       Tanggal
                     </th>
@@ -279,6 +299,13 @@ export function TurnoverTable({
                       className="bg-muted/60 text-muted-foreground px-3 py-2 text-left font-medium"
                     >
                       Site
+                    </th>
+                    <th
+                      rowSpan={2}
+                      data-capture-exclude
+                      className="bg-muted/60 text-muted-foreground px-3 py-2 text-left font-medium"
+                    >
+                      Diubah
                     </th>
                     {groups.map(([category, categoryGames]) => (
                       <th
@@ -301,7 +328,7 @@ export function TurnoverTable({
                     <th
                       rowSpan={2}
                       data-capture-exclude
-                      className="bg-muted/60 text-muted-foreground sticky right-0 z-20 w-28 border-l px-3 py-2 text-right font-medium"
+                      className="bg-muted-soft text-muted-foreground sticky right-0 z-20 w-12 border-l px-3 py-2 text-right font-medium sm:w-24"
                     >
                       Aksi
                     </th>
@@ -316,6 +343,12 @@ export function TurnoverTable({
                       </th>
                       <th className="bg-background text-muted-foreground px-2.5 py-2 text-left font-medium">
                         Site
+                      </th>
+                      <th
+                        data-capture-exclude
+                        className="bg-background text-muted-foreground px-2.5 py-2 text-left font-medium"
+                      >
+                        Diubah
                       </th>
                     </>
                   )}
@@ -337,7 +370,7 @@ export function TurnoverTable({
                       </th>
                       <th
                         data-capture-exclude
-                        className="bg-background text-muted-foreground sticky right-0 z-20 w-28 border-l px-2.5 py-2 text-right font-medium"
+                        className="bg-background text-muted-foreground sticky right-0 z-20 w-12 border-l px-2.5 py-2 text-right font-medium sm:w-24"
                       >
                         Aksi
                       </th>
@@ -352,13 +385,29 @@ export function TurnoverTable({
                     key={row.id}
                     className="hover:bg-muted/40 group border-b transition-colors"
                   >
-                    <td className="bg-background group-hover:bg-muted/40 sticky left-0 z-10 border-r px-2.5 py-1.5 font-medium whitespace-nowrap">
+                    <td className="bg-background group-hover:bg-muted-row sticky left-0 z-10 border-r px-2.5 py-1.5 font-medium whitespace-nowrap">
                       {row.reportDate}
                     </td>
                     <td className="px-2.5 py-1.5">
                       <Badge variant="secondary" className="font-normal">
                         {row.siteCode}
                       </Badge>
+                    </td>
+                    {/* Third, not last: with a column per game a trailing
+                        column is off-screen, and who last changed a row is what
+                        someone checking a figure needs first. Screen only. */}
+                    <td
+                      data-capture-exclude
+                      className="px-2.5 py-1.5 whitespace-nowrap"
+                    >
+                      <EditStamp
+                        label={row.reportDate}
+                        createdAt={row.createdAt}
+                        updatedAt={row.updatedAt}
+                        createdBy={row.createdBy}
+                        updatedBy={row.updatedBy}
+                        historyUrl={`/api/turnover/${row.id}/history`}
+                      />
                     </td>
 
                     {games.map((game) => {
@@ -383,52 +432,30 @@ export function TurnoverTable({
 
                     <td
                       data-capture-exclude
-                      className="bg-background group-hover:bg-muted/40 sticky right-0 z-10 border-l px-2"
+                      className="bg-background group-hover:bg-muted-row sticky right-0 z-10 border-l px-1 sm:px-2"
                     >
                       {/* Always visible, not revealed on hover: a hover-only
                           control does not exist on touch, and hides that the
                           row is actionable. Excluded from the image capture. */}
-                      <div className="flex items-center justify-end gap-0.5">
-                        {canEdit && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label={`Ubah laporan ${row.reportDate}`}
-                            onClick={() => setEditing(row)}
-                          >
-                            <Pencil className="size-4" />
-                          </Button>
-                        )}
-                        {canDelete && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label={`Hapus laporan ${row.reportDate}`}
-                            className="text-muted-foreground hover:text-destructive"
-                            onClick={() => setPendingDelete(row)}
-                          >
-                            <Trash2 className="size-4" />
-                          </Button>
-                        )}
-                        <RecordInfoPopover
-                          createdAt={row.createdAt}
-                          updatedAt={row.updatedAt}
-                          createdBy={row.createdBy}
-                          updatedBy={row.updatedBy}
-                          label={row.reportDate}
-                        />
-                      </div>
+                      <RowActions
+                        label={row.reportDate}
+                        canEdit={canEdit}
+                        canDelete={canDelete}
+                        onEdit={() => setEditing(row)}
+                        onDelete={() => setPendingDelete(row)}
+                      />
                     </td>
                   </tr>
                 ))}
               </tbody>
 
-              <tfoot className="bg-muted/50 sticky bottom-0">
+              <tfoot className="bg-muted-soft sticky bottom-0">
                 <tr className="border-t-2">
-                  <td className="bg-muted/50 sticky left-0 z-10 border-r px-2.5 py-2 font-medium">
+                  <td className="bg-muted-soft sticky left-0 z-10 border-r px-2.5 py-2 font-medium">
                     Total
                   </td>
                   <td />
+                  <td data-capture-exclude />
                   {games.map((game) => (
                     <td
                       key={game.id}
@@ -442,7 +469,7 @@ export function TurnoverTable({
                   </td>
                   <td
                     data-capture-exclude
-                    className="bg-muted/50 sticky right-0 z-10 border-l"
+                    className="bg-muted-soft sticky right-0 z-10 border-l"
                   />
                 </tr>
               </tfoot>
@@ -492,6 +519,7 @@ export function TurnoverTable({
           setCreating(false);
           setEditing(null);
           void queryClient.invalidateQueries({ queryKey: ['turnover'] });
+          void queryClient.invalidateQueries({ queryKey: ['row-history'] });
         }}
       />
 

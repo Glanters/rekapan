@@ -13,6 +13,8 @@ import { scopedWhere } from '../db/site-scope';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { resolveUserNames } from '../users/service';
 
+import { recordMonthlyWrite } from './history';
+
 /**
  * Monthly reporting.
  *
@@ -562,7 +564,7 @@ export interface UpsertMonthlyInput {
 }
 
 /** The four typed columns a cell resolves to; exactly one is ever populated. */
-interface ValueColumns {
+export interface ValueColumns {
   valueNumeric: number | null;
   valueText: string | null;
   valueDate: Date | null;
@@ -765,7 +767,33 @@ export async function commitMonthlyUpsert(
   tx: Prisma.TransactionClient,
   ctx: AccessContext,
   plan: MonthlyWritePlan,
-): Promise<{ id: string; created: boolean }> {
+): Promise<MonthlyCommitResult> {
+  // Read before writing, inside the same transaction, so the audit trail can
+  // record what each changed cell held before this save overwrote it.
+  const [previousValues, previousBanks] = plan.existingId
+    ? await Promise.all([
+        tx.monthlyValue.findMany({
+          where: {
+            reportId: plan.existingId,
+            columnId: { in: plan.values.map((value) => value.columnId) },
+          },
+          select: {
+            columnId: true,
+            valueNumeric: true,
+            valueText: true,
+            valueDate: true,
+            valueBool: true,
+          },
+        }),
+        plan.validations === null
+          ? Promise.resolve([])
+          : tx.monthlyValidation.findMany({
+              where: { reportId: plan.existingId },
+              select: { bankId: true, memberCount: true },
+            }),
+      ])
+    : [[], []];
+
   const report = plan.existingId
     ? await tx.monthlyReport.update({
         where: { id: plan.existingId },
@@ -825,7 +853,58 @@ export async function commitMonthlyUpsert(
     });
   }
 
-  return { id: report.id, created: plan.existingId === null };
+  const beforeByColumn = new Map(
+    previousValues.map((row) => [
+      row.columnId,
+      storedCell({
+        valueNumeric: row.valueNumeric === null ? null : Number(row.valueNumeric),
+        valueText: row.valueText,
+        valueDate: row.valueDate,
+        valueBool: row.valueBool,
+      }),
+    ]),
+  );
+  const changes = plan.values
+    .map((value) => ({
+      columnId: value.columnId,
+      before: beforeByColumn.get(value.columnId) ?? null,
+      after: storedCell(value.data),
+    }))
+    .filter((change) => change.before !== change.after);
+
+  let bankChanges: MonthlyCommitResult['bankChanges'] = [];
+  if (plan.validations !== null) {
+    const before = new Map(previousBanks.map((row) => [row.bankId, row.memberCount]));
+    const after = new Map(plan.validations.map((row) => [row.bankId, row.memberCount]));
+    bankChanges = [...new Set([...before.keys(), ...after.keys()])]
+      .map((bankId) => ({
+        bankId,
+        before: before.get(bankId) ?? null,
+        after: after.get(bankId) ?? null,
+      }))
+      .filter((change) => change.before !== change.after);
+  }
+
+  return { id: report.id, created: plan.existingId === null, changes, bankChanges };
+}
+
+/** What one commit wrote, cell by cell, for the audit trail. */
+export interface MonthlyCommitResult {
+  id: string;
+  created: boolean;
+  /** Only the cells whose stored value actually changed. */
+  changes: { columnId: string; before: CellValue; after: CellValue }[];
+  /** Per-bank member counts that changed; empty when the breakdown was untouched. */
+  bankChanges: { bankId: string; before: number | null; after: number | null }[];
+}
+
+/** A stored cell as one comparable value; dates as ISO days. */
+function storedCell(value: ValueColumns): CellValue {
+  if (value.valueNumeric !== null) return value.valueNumeric;
+  if (value.valueText !== null) return value.valueText;
+  if (value.valueDate !== null) return toIsoDate(value.valueDate);
+  if (value.valueBool !== null) return value.valueBool;
+  return null;
 }
 
 /**
@@ -847,19 +926,12 @@ export async function upsertMonthly(ctx: AccessContext, input: UpsertMonthlyInpu
     commitMonthlyUpsert(tx, ctx, plan),
   );
 
-  await recordAudit({
-    action: result.created ? 'monthly.created' : 'monthly.updated',
-    module: 'Monthly',
-    actorId: ctx.userId,
-    actorEmail: ctx.email,
+  await recordMonthlyWrite(ctx, {
     siteId: input.siteId,
-    entityType: 'MonthlyReport',
-    entityId: result.id,
-    after: {
-      reportDate: input.reportDate,
-      values: input.values,
-      ...(input.validations ? { validations: input.validations } : {}),
-    },
+    reportDate: input.reportDate,
+    result,
+    context,
+    source: 'form',
   });
 
   return { id: result.id };
@@ -925,6 +997,9 @@ export async function deleteMonthly(ctx: AccessContext, reportId: string) {
     entityType: 'MonthlyReport',
     entityId: reportId,
     before: { reportDate: toIsoDate(report.reportDate) },
+    ip: ctx.ip,
+    userAgent: ctx.userAgent,
+    requestId: ctx.requestId,
   });
 
   return { id: reportId };

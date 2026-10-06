@@ -1,5 +1,7 @@
 import type { AccessContext } from '../auth/access-context';
 import { recordAudit } from '../audit/record';
+
+import { recordMonthlyWrite } from './history';
 import { unsafeDb } from '../db/prisma';
 import { isAppError, ValidationError } from '../errors';
 import { finishExportJob, recordImportJob, startExportJob } from '../transfer/jobs';
@@ -45,6 +47,7 @@ import {
   countMonthly,
   listColumns,
   loadMonthlyPlanContext,
+  type MonthlyCommitResult,
   planMonthlyUpsert,
   streamMonthlyRows,
 } from './service';
@@ -489,11 +492,12 @@ export async function importMonthly(
   // that every site about to be written is inside the caller's reach.
   ctx.requireSites(touchedSites);
 
+  const committed: { plan: (typeof plans)[number]; result: MonthlyCommitResult }[] = [];
   if (plans.length > 0) {
     await unsafeDb.$transaction(
       async (tx) => {
         for (const plan of plans) {
-          await commitMonthlyUpsert(tx, ctx, plan);
+          committed.push({ plan, result: await commitMonthlyUpsert(tx, ctx, plan) });
         }
       },
       {
@@ -501,6 +505,20 @@ export async function importMonthly(
         timeout: IMPORT_TRANSACTION_TIMEOUT_MS,
       },
     );
+  }
+
+  // One history entry per report the file actually changed, so an import that
+  // overwrote a figure shows up on that report's own history, not only as a
+  // row count on the import summary. Written after the commit: an audit entry
+  // for a write that rolled back would be a false record.
+  for (const { plan, result } of committed) {
+    await recordMonthlyWrite(ctx, {
+      siteId: plan.siteId,
+      reportDate: plan.reportDate.toISOString().slice(0, 10),
+      result,
+      context,
+      source: 'import',
+    });
   }
 
   const importJobId = await recordImportJob(ctx, {

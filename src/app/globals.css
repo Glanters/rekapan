@@ -31,6 +31,10 @@
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
   --color-muted: var(--muted);
+  /* Opaque tints of muted over the page, for sticky table cells: a translucent
+     `bg-muted/50` on a pinned cell lets the scrolled columns show through. */
+  --color-muted-row: color-mix(in oklch, var(--muted) 40%, var(--background));
+  --color-muted-soft: color-mix(in oklch, var(--muted) 55%, var(--background));
   --color-secondary-foreground: var(--secondary-foreground);
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
