@@ -15,7 +15,7 @@ import {
   Sigma,
   Trash2,
 } from 'lucide-react';
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { z } from 'zod';
@@ -201,13 +201,26 @@ async function callApi<T>(url: string, init?: RequestInit): Promise<T> {
   return payload.data as T;
 }
 
-type FormState = { mode: 'create' } | { mode: 'edit'; column: ColumnRow };
+type FormState =
+  { mode: 'create'; templateId?: string } | { mode: 'edit'; column: ColumnRow };
+
+// Which template the list is scoped to: every column, or one template's
+// effective set (its own columns plus the shared ones).
+const ALL_TEMPLATES = '__all__';
+
+interface ColumnSection {
+  key: string;
+  title: string;
+  hint: string;
+  rows: ColumnRow[];
+}
 
 export function ColumnsClient({ canCreate, canUpdate, canDelete }: ColumnsClientProps) {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [formState, setFormState] = useState<FormState | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ColumnRow | null>(null);
+  const [view, setView] = useState<string>(ALL_TEMPLATES);
 
   const { data, isLoading } = useQuery({
     queryKey: ['master-columns'],
@@ -253,6 +266,47 @@ export function ColumnsClient({ canCreate, canUpdate, canDelete }: ColumnsClient
       )
     : columns;
 
+  // A template that disappeared (deleted elsewhere) falls back to every column.
+  const activeTemplate =
+    view === ALL_TEMPLATES ? null : (templates.find((t) => t.id === view) ?? null);
+
+  const shared = filtered.filter((column) => column.templateId === null);
+  const sections: ColumnSection[] = activeTemplate
+    ? [
+        {
+          key: activeTemplate.id,
+          title: `Kolom pada template ${activeTemplate.name}`,
+          hint: 'Kolom bersama ditambah kolom khusus template ini, sesuai urutan di tabel Monthly.',
+          rows: filtered.filter(
+            (column) =>
+              column.templateId === null || column.templateId === activeTemplate.id,
+          ),
+        },
+      ]
+    : [
+        {
+          key: 'shared',
+          title: 'Bersama',
+          hint: 'Tampil di semua template.',
+          rows: shared,
+        },
+        ...templates.map((template) => ({
+          key: template.id,
+          title: `Khusus ${template.name}`,
+          hint: `Hanya tampil pada template ${template.name}.`,
+          rows: filtered.filter((column) => column.templateId === template.id),
+        })),
+      ];
+  // In the all-templates view an empty section is noise, except while
+  // searching, where it is simply not shown either.
+  const visibleSections = sections.filter((section) => section.rows.length > 0);
+
+  const countFor = (templateId: string | null) =>
+    templateId === null
+      ? columns.length
+      : columns.filter((c) => c.templateId === null || c.templateId === templateId)
+          .length;
+
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -274,7 +328,14 @@ export function ColumnsClient({ canCreate, canUpdate, canDelete }: ColumnsClient
             />
           </div>
           {canCreate && (
-            <Button onClick={() => setFormState({ mode: 'create' })}>
+            <Button
+              onClick={() =>
+                setFormState({
+                  mode: 'create',
+                  ...(activeTemplate ? { templateId: activeTemplate.id } : {}),
+                })
+              }
+            >
               <Plus className="size-4" />
               Tambah kolom
             </Button>
@@ -296,18 +357,44 @@ export function ColumnsClient({ canCreate, canUpdate, canDelete }: ColumnsClient
         </CardContent>
       </Card>
 
+      {templates.length > 0 && (
+        <div
+          role="radiogroup"
+          aria-label="Template"
+          className="border-border/60 bg-muted/40 inline-flex flex-wrap rounded-md border p-0.5"
+        >
+          <ViewButton
+            active={activeTemplate === null}
+            onClick={() => setView(ALL_TEMPLATES)}
+            count={countFor(null)}
+          >
+            Semua template
+          </ViewButton>
+          {templates.map((template) => (
+            <ViewButton
+              key={template.id}
+              active={activeTemplate?.id === template.id}
+              onClick={() => setView(template.id)}
+              count={countFor(template.id)}
+            >
+              {template.name}
+            </ViewButton>
+          ))}
+        </div>
+      )}
+
       <Card className="border-border/60 overflow-hidden py-0">
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead className="w-20">Posisi</TableHead>
-                <TableHead>Key</TableHead>
+                <TableHead className="hidden md:table-cell">Key</TableHead>
                 <TableHead>Label</TableHead>
-                <TableHead>Grup</TableHead>
-                <TableHead>Template</TableHead>
-                <TableHead>Tipe</TableHead>
-                <TableHead>Sifat</TableHead>
+                <TableHead className="hidden md:table-cell">Grup</TableHead>
+                <TableHead className="hidden md:table-cell">Template</TableHead>
+                <TableHead className="hidden md:table-cell">Tipe</TableHead>
+                <TableHead className="hidden sm:table-cell">Sifat</TableHead>
                 <TableHead className="w-12" />
               </TableRow>
             </TableHeader>
@@ -321,7 +408,7 @@ export function ColumnsClient({ canCreate, canUpdate, canDelete }: ColumnsClient
                   </TableRow>
                 ))}
 
-              {!isLoading && filtered.length === 0 && (
+              {!isLoading && visibleSections.length === 0 && (
                 <TableRow>
                   <TableCell
                     colSpan={8}
@@ -330,163 +417,189 @@ export function ColumnsClient({ canCreate, canUpdate, canDelete }: ColumnsClient
                     <Columns3 className="mx-auto mb-2 size-8 opacity-40" />
                     {columns.length === 0
                       ? 'Belum ada kolom.'
-                      : 'Tidak ada kolom yang cocok.'}
+                      : term
+                        ? 'Tidak ada kolom yang cocok.'
+                        : 'Belum ada kolom untuk template ini.'}
                   </TableCell>
                 </TableRow>
               )}
 
-              {filtered.map((column) => (
-                <TableRow
-                  key={column.id}
-                  className={cn(!column.isVisible && 'opacity-60')}
-                >
-                  <TableCell className="text-muted-foreground font-mono text-xs">
-                    {column.position}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs font-medium">
-                    <span className="flex items-center gap-1.5">
-                      {column.key}
-                      {column.isSystem && (
-                        <Lock
-                          className="text-muted-foreground size-3"
-                          aria-label="Kolom sistem"
-                        />
-                      )}
-                    </span>
-                  </TableCell>
-                  <TableCell className="font-medium">{column.label}</TableCell>
-                  <TableCell className="text-muted-foreground text-sm">
-                    {column.group ?? '—'}
-                  </TableCell>
-                  <TableCell>
-                    {column.template ? (
-                      <Badge variant="outline" className="font-normal">
-                        {column.template.code}
-                      </Badge>
-                    ) : (
-                      <span className="text-muted-foreground text-sm">Semua</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-sm">
-                    {DATA_TYPE_ITEMS[column.dataType] ?? column.dataType}
-                    {column.unit && (
-                      <span className="text-muted-foreground ml-1 text-xs">
-                        ({column.unit})
-                      </span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      {/* The result column and its contributors are marked
-                          first: how a column feeds the result is the thing an
-                          administrator scans this list for. */}
-                      {column.resultEffect === 'RESULT' && (
-                        <Badge className="gap-1 border-amber-500/30 bg-amber-500/15 font-normal text-amber-700 dark:text-amber-400">
-                          <Sigma className="size-3" />
-                          Kolom hasil
-                        </Badge>
-                      )}
-                      {column.resultEffect === 'ADD' && (
-                        <Badge
-                          variant="outline"
-                          className="border-emerald-500/30 bg-emerald-500/10 font-normal text-emerald-700 dark:text-emerald-400"
-                        >
-                          + hasil
-                        </Badge>
-                      )}
-                      {column.resultEffect === 'SUBTRACT' && (
-                        <Badge
-                          variant="outline"
-                          className="border-red-500/30 bg-red-500/10 font-normal text-red-700 dark:text-red-400"
-                        >
-                          − hasil
-                        </Badge>
-                      )}
-                      {column.isSystem && (
-                        <Badge variant="secondary" className="font-normal">
-                          Sistem
-                        </Badge>
-                      )}
-                      {column.isRequired && (
-                        <Badge variant="outline" className="font-normal">
-                          Wajib
-                        </Badge>
-                      )}
-                      {!column.isVisible && (
-                        <Badge
-                          variant="outline"
-                          className="text-muted-foreground font-normal"
-                        >
-                          Tersembunyi
-                        </Badge>
-                      )}
-                      {column.includeInTotals && (
-                        <Badge variant="outline" className="font-normal">
-                          Total
-                        </Badge>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    {(canUpdate || canDelete) && (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label="Aksi"
-                              disabled={mutate.isPending}
+              {visibleSections.map((section) => (
+                <Fragment key={section.key}>
+                  {/* One template in view needs no heading: the switcher
+                      above already names it. */}
+                  {activeTemplate === null && (
+                    <TableRow className="bg-muted/40 hover:bg-muted/40">
+                      <TableCell colSpan={8} className="py-2">
+                        <span className="text-sm font-semibold">{section.title}</span>
+                        <span className="text-muted-foreground ml-2 text-xs">
+                          {section.rows.length} kolom · {section.hint}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {section.rows.map((column) => (
+                    <TableRow
+                      key={column.id}
+                      className={cn(!column.isVisible && 'opacity-60')}
+                    >
+                      <TableCell className="text-muted-foreground font-mono text-xs">
+                        {column.position}
+                      </TableCell>
+                      <TableCell className="hidden font-mono text-xs font-medium md:table-cell">
+                        <span className="flex items-center gap-1.5">
+                          {column.key}
+                          {column.isSystem && (
+                            <Lock
+                              className="text-muted-foreground size-3"
+                              aria-label="Kolom sistem"
                             />
-                          }
-                        >
-                          {mutate.isPending ? (
-                            <Loader2 className="size-4 animate-spin" />
-                          ) : (
-                            <MoreHorizontal className="size-4" />
                           )}
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-52">
-                          {canUpdate && (
-                            <DropdownMenuItem
-                              onClick={() => setFormState({ mode: 'edit', column })}
+                        </span>
+                      </TableCell>
+                      <TableCell className="font-medium">
+                        {column.label}
+                        {/* Key and template ride under the label on phones,
+                            where their own columns are hidden. */}
+                        <span className="text-muted-foreground block font-mono text-xs font-normal md:hidden">
+                          {column.key}
+                          {column.template ? ` · ${column.template.code}` : ''}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground hidden text-sm md:table-cell">
+                        {column.group ?? '—'}
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell">
+                        {column.template ? (
+                          <Badge variant="outline" className="font-normal">
+                            {column.template.code}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">Bersama</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="hidden text-sm md:table-cell">
+                        {DATA_TYPE_ITEMS[column.dataType] ?? column.dataType}
+                        {column.unit && (
+                          <span className="text-muted-foreground ml-1 text-xs">
+                            ({column.unit})
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="hidden sm:table-cell">
+                        <div className="flex flex-wrap gap-1">
+                          {/* The result column and its contributors are marked
+                              first: how a column feeds the result is the thing an
+                              administrator scans this list for. */}
+                          {column.resultEffect === 'RESULT' && (
+                            <Badge className="gap-1 border-amber-500/30 bg-amber-500/15 font-normal text-amber-700 dark:text-amber-400">
+                              <Sigma className="size-3" />
+                              Kolom hasil
+                            </Badge>
+                          )}
+                          {column.resultEffect === 'ADD' && (
+                            <Badge
+                              variant="outline"
+                              className="border-emerald-500/30 bg-emerald-500/10 font-normal text-emerald-700 dark:text-emerald-400"
                             >
-                              <Pencil className="size-4" />
-                              Ubah
-                            </DropdownMenuItem>
+                              + hasil
+                            </Badge>
                           )}
-                          {canUpdate && (
-                            <DropdownMenuItem
-                              onClick={() =>
-                                mutate.mutate({
-                                  url: `/api/master/columns/${column.id}`,
-                                  method: 'PATCH',
-                                  body: { isVisible: !column.isVisible },
-                                })
+                          {column.resultEffect === 'SUBTRACT' && (
+                            <Badge
+                              variant="outline"
+                              className="border-red-500/30 bg-red-500/10 font-normal text-red-700 dark:text-red-400"
+                            >
+                              − hasil
+                            </Badge>
+                          )}
+                          {column.isSystem && (
+                            <Badge variant="secondary" className="font-normal">
+                              Sistem
+                            </Badge>
+                          )}
+                          {column.isRequired && (
+                            <Badge variant="outline" className="font-normal">
+                              Wajib
+                            </Badge>
+                          )}
+                          {!column.isVisible && (
+                            <Badge
+                              variant="outline"
+                              className="text-muted-foreground font-normal"
+                            >
+                              Tersembunyi
+                            </Badge>
+                          )}
+                          {column.includeInTotals && (
+                            <Badge variant="outline" className="font-normal">
+                              Total
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {(canUpdate || canDelete) && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger
+                              render={
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-label="Aksi"
+                                  disabled={mutate.isPending}
+                                />
                               }
                             >
-                              <Check className="size-4" />
-                              {column.isVisible ? 'Sembunyikan' : 'Tampilkan'}
-                            </DropdownMenuItem>
-                          )}
-                          {/* A system column cannot be deleted; the server
-                              refuses it, so the option is not offered either. */}
-                          {canDelete &&
-                            !column.isSystem &&
-                            column.resultEffect !== 'RESULT' && (
-                              <DropdownMenuItem
-                                variant="destructive"
-                                onClick={() => setPendingDelete(column)}
-                              >
-                                <Trash2 className="size-4" />
-                                Hapus
-                              </DropdownMenuItem>
-                            )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    )}
-                  </TableCell>
-                </TableRow>
+                              {mutate.isPending ? (
+                                <Loader2 className="size-4 animate-spin" />
+                              ) : (
+                                <MoreHorizontal className="size-4" />
+                              )}
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-52">
+                              {canUpdate && (
+                                <DropdownMenuItem
+                                  onClick={() => setFormState({ mode: 'edit', column })}
+                                >
+                                  <Pencil className="size-4" />
+                                  Ubah
+                                </DropdownMenuItem>
+                              )}
+                              {canUpdate && (
+                                <DropdownMenuItem
+                                  onClick={() =>
+                                    mutate.mutate({
+                                      url: `/api/master/columns/${column.id}`,
+                                      method: 'PATCH',
+                                      body: { isVisible: !column.isVisible },
+                                    })
+                                  }
+                                >
+                                  <Check className="size-4" />
+                                  {column.isVisible ? 'Sembunyikan' : 'Tampilkan'}
+                                </DropdownMenuItem>
+                              )}
+                              {/* A system column cannot be deleted; the server
+                                  refuses it, so the option is not offered either. */}
+                              {canDelete &&
+                                !column.isSystem &&
+                                column.resultEffect !== 'RESULT' && (
+                                  <DropdownMenuItem
+                                    variant="destructive"
+                                    onClick={() => setPendingDelete(column)}
+                                  >
+                                    <Trash2 className="size-4" />
+                                    Hapus
+                                  </DropdownMenuItem>
+                                )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </Fragment>
               ))}
             </TableBody>
           </Table>
@@ -621,7 +734,11 @@ function ColumnForm({
       includeInTotals: editing?.includeInTotals ?? true,
       resultEffect: editing?.resultEffect ?? 'NEUTRAL',
       // New columns default to shared; editing keeps the column's own template.
-      templateId: editing?.templateId ?? SHARED_TEMPLATE,
+      // A column added from a template's view starts on that template.
+      templateId:
+        editing?.templateId ??
+        (state.mode === 'create' ? state.templateId : undefined) ??
+        SHARED_TEMPLATE,
     },
   });
 
@@ -947,6 +1064,36 @@ function ToggleField({
         <span className="block text-sm font-medium">{label}</span>
         <span className="text-muted-foreground block text-xs">{description}</span>
       </span>
+    </button>
+  );
+}
+
+function ViewButton({
+  active,
+  onClick,
+  count,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  count: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      onClick={onClick}
+      className={cn(
+        'focus-visible:ring-ring/50 inline-flex items-center gap-1.5 rounded px-3 py-2 text-sm font-medium transition-colors outline-none focus-visible:ring-3 sm:py-1',
+        active
+          ? 'bg-background text-foreground shadow-sm'
+          : 'text-muted-foreground hover:text-foreground',
+      )}
+    >
+      {children}
+      <span className="text-muted-foreground text-xs tabular-nums">{count}</span>
     </button>
   );
 }
